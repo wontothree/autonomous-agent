@@ -54,20 +54,42 @@ class MonteCarloLocalizer:
             particle_num=100,
             initial_pose_noise=[0.02, 0.02, 0.02],
             odom_noise=[0.01, 0.002, 0.002, 0.01],
+
+            # Weight
+            scan_min_angle=-1.9,
+            scan_angle_increment=0.016,
+            scan_min_range=0.05,
+            scan_max_range=8.0,
+            scan_step=3,
+            sigma_hit=0.2,
+            z_hit=0.95,
+            z_rand=0.05,
+
+            # Resamping
             omega_slow=0.0,
             omega_fast=0.0,
             alpha_slow=0.001,
-            alpha_fast=0.9
+            alpha_fast=0.9,
+            resample_ess_ratio=0.5,
             ):
         
         # Constants
-        self.odom_noise = odom_noise
-        self.initial_pose_noise = initial_pose_noise
         self.particle_num = particle_num
+        self.initial_pose_noise = initial_pose_noise
+        self.odom_noise = odom_noise
+        self.scan_min_angle = scan_min_angle
+        self.scan_angle_increment = scan_angle_increment
+        self.scan_min_range = scan_min_range
+        self.scan_max_range = scan_max_range
+        self.scan_step = scan_step
+        self.sigma_hit = sigma_hit
+        self.z_hit = z_hit
+        self.z_rand = z_rand
         self.omega_slow = omega_slow
         self.omega_fast = omega_fast
         self.alpha_slow = alpha_slow
         self.alpha_fast = alpha_fast
+        self.resample_ess_ratio = resample_ess_ratio
 
         # Member variables
         self.particles = []   
@@ -140,28 +162,13 @@ class MonteCarloLocalizer:
 			# update each particle	
             particle.pose.update(updated_x, updated_y, updated_yaw)
 
-    # 수정 안 함
-
     def update_weights_by_measurement_model(
         self,
         scan_ranges: np.ndarray,
         occupancy_grid_map: np.ndarray,
         distance_map: np.ndarray,
-
-        # Map
         map_origin=(float, float),
         map_resolution= float,
-
-        # LiDAR
-        min_angle=-1.9,
-        angle_increment=0.016,
-        min_range=0.05,
-        max_range=8.0,
-        scan_step=3, # or beam_sample_count
-
-        sigma_hit=0.2,
-        z_hit=0.95,
-        z_rand=0.05
         ):
         """
         Parameters
@@ -177,16 +184,24 @@ class MonteCarloLocalizer:
         Using
         -----
         - self.particle_num
+        - self.scan_min_angle
+        - self.scan_angle_increment
+        - self.scan_min_range
+        - self.scan_max_range
+        - self.scan_step
+        - self.sigma_hit
+        - self.z_hit
+        - self.z_rand
         """   
 
         eps = 1e-12
 
         beam_num = len(scan_ranges)
-        sampled_beam_indices = np.arange(0, beam_num, scan_step)
-        sampled_beam_angles = min_angle + sampled_beam_indices * angle_increment
+        sampled_beam_indices = np.arange(0, beam_num, self.scan_step)
+        sampled_beam_angles = self.scan_min_angle + sampled_beam_indices * self.scan_angle_increment
         sampled_scan_ranges = scan_ranges[sampled_beam_indices]
         
-        denominator = 2.0 * (sigma_hit ** 2)
+        denominator = 2.0 * (self.sigma_hit ** 2)
         inv_denominator = 1.0 / denominator
         
         # Map constant
@@ -220,8 +235,8 @@ class MonteCarloLocalizer:
                 range_measurement = sampled_scan_ranges[beam_index]
                 
                 # Check validity of range
-                if not (min_range < range_measurement < max_range) or np.isinf(range_measurement) or np.isnan(range_measurement):
-                    log_likelihood += math.log(z_rand + eps)
+                if not (self.scan_min_range < range_measurement < self.scan_max_range) or np.isinf(range_measurement) or np.isnan(range_measurement):
+                    log_likelihood += math.log(self.z_rand + eps)
                     continue
                 
                 # LiDAR endpoint
@@ -241,11 +256,11 @@ class MonteCarloLocalizer:
                     distance_in_meters = float(distance_in_cells)
                     
                     prob_hit = math.exp( -(distance_in_meters ** 2) * inv_denominator)
-                    total_prob = z_hit * prob_hit + z_rand * (1.0 / max_range)
+                    total_prob = self.z_hit * prob_hit + self.z_rand * (1.0 / self.scan_max_range)
                     
                     log_likelihood += math.log(total_prob + eps)
                 else:
-                    log_likelihood += math.log(z_rand + eps)
+                    log_likelihood += math.log(self.z_rand + eps)
         
             log_weights[particle_index] = log_likelihood
             
@@ -304,6 +319,7 @@ class MonteCarloLocalizer:
         - self.omega_fast
         - self.alpha_slow
         - self.alpha_slow
+        - self.resample_ess_ratio
         """
         def calculate_amcl_random_particle_rate(average_likelihood):
             self.omega_slow += self.alpha_slow * (average_likelihood - self.omega_slow)
@@ -311,7 +327,11 @@ class MonteCarloLocalizer:
             amcl_random_particle_rate = 1.0 - self.omega_fast / self.omega_slow
             return max(amcl_random_particle_rate, 0.0)
 
-        def calculate_effective_sample_size(total_likelihood):
+        # 수정해야 함. 변수명. sum 바꿔야 함
+        def calculate_effective_sample_size():
+            weights = np.array([particle.weight for particle in self.particles])
+            total_likelihood = np.sum(weights)
+
             sum = 0.0
             for index in range(self.particle_num):
                 weight = self.particles[index].weight / total_likelihood
@@ -319,6 +339,12 @@ class MonteCarloLocalizer:
                 sum += weight * weight
             effective_sample_size = 1.0 / sum
             return effective_sample_size
+        
+        # Inspect effective sample size
+        threshold = self.particle_num * self.resample_ess_ratio
+        effective_sample_size = calculate_effective_sample_size()
+        if effective_sample_size > threshold: return
+        # --- 추가
 
         weights = np.array([particle.weight for particle in self.particles])
         weights /= np.sum(weights)  # normalize
@@ -337,14 +363,3 @@ class MonteCarloLocalizer:
             )
             for i in indices
         ]
-
-if __name__ == '__main__':
-    mcl = MonteCarloLocalizer()
-    mcl.initialize_particles(Pose(10, 10, 0), Pose(0.1, 0.1, 0.1))
-    print(mcl.particles[0])
-    mcl.update_particles_by_motion_model(0.1, 0.2)
-    print(mcl.particles[0])
-    robot_pose = mcl.estimate_robot_pose()
-    print(robot_pose)
-
-    mcl.resample_particles()
