@@ -21,7 +21,7 @@
 | 7 | estimate_robot_pose |  |  |
 | 8 | resample_particles |  |  |
 
-## Autonomous Agent
+## AutonomousNavigator
 
 || Function ||
 |---|---|---|

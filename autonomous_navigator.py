@@ -1,4 +1,4 @@
-class AutonomousAgent:
+class AutonomousNavigator:
     def mission_planner(
             self, 
             air_sensor_pollution_data, 
