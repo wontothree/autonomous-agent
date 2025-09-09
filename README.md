@@ -8,7 +8,9 @@
 
 --- 
 
-# MCL
+# Classes
+
+## MonteCarloLocalizer
 
 | Step | Function |  |  |
 |---|---|---|---|
@@ -19,4 +21,19 @@
 | 7 | estimate_robot_pose |  |  |
 | 8 | resample_particles |  |  |
 
+## Autonomous Agent
+
+|| Function ||
+|---|---|---|
+||mission_planner||
+||global_planner||
+||localizer||
+||controller||
+||finite_state_machine||
+
 ---
+
+# To Do
+
+- [] ModelPredictivePathIntegralController
+- [] LocalCostMapGenerator
