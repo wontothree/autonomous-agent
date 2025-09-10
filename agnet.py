@@ -253,7 +253,7 @@ class Map:
 1111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111
 1111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111
 """
-  
+
     def string_to_np_array_map(self, string_map: str) -> np.ndarray:
         return np.array([list(map(int, line)) 
                         for line in string_map.strip().splitlines() 
@@ -338,6 +338,7 @@ class MonteCarloLocalizer:
             sigma_hit=0.2,
             z_hit=0.95,
             z_rand=0.05,
+            baselink_to_laser=[0.147, 0.0, 0.0],  # [x, y, yaw(rad)]
 
             # Resamping
             omega_slow=0.0,
@@ -345,7 +346,7 @@ class MonteCarloLocalizer:
             alpha_slow=0.001,
             alpha_fast=0.9,
             resample_ess_ratio=0.5,
-            ):
+        ):
         
         # Constants
         self.particle_num = particle_num
@@ -359,6 +360,7 @@ class MonteCarloLocalizer:
         self.sigma_hit = sigma_hit
         self.z_hit = z_hit
         self.z_rand = z_rand
+        self.baselink_to_laser = baselink_to_laser
         self.omega_slow = omega_slow
         self.omega_fast = omega_fast
         self.alpha_slow = alpha_slow
@@ -437,12 +439,12 @@ class MonteCarloLocalizer:
             particle.pose.update(updated_x, updated_y, updated_yaw)
 
     def update_weights_by_measurement_model(
-        self,
-        scan_ranges: np.ndarray,
-        occupancy_grid_map: np.ndarray,
-        distance_map: np.ndarray,
-        map_origin=(float, float),
-        map_resolution= float,
+            self,
+            scan_ranges: np.ndarray,
+            occupancy_grid_map: np.ndarray,
+            distance_map: np.ndarray,
+            map_origin=(float, float),
+            map_resolution= float,
         ):
         """
         Parameters
@@ -466,6 +468,8 @@ class MonteCarloLocalizer:
         - self.sigma_hit
         - self.z_hit
         - self.z_rand
+
+        - self.baselink_to_laser
         """   
 
         eps = 1e-12
@@ -500,6 +504,7 @@ class MonteCarloLocalizer:
         for particle_index in range(self.particle_num):
             particle_x = particle_xs[particle_index]
             particle_y = particle_ys[particle_index]
+            particle_yaw = particle_yaws[particle_index]
             cos_yaw = particle_cos_yaws[particle_index]
             sin_yaw = particle_sin_yaws[particle_index]
             
@@ -513,12 +518,13 @@ class MonteCarloLocalizer:
                     log_likelihood += math.log(self.z_rand + eps)
                     continue
                 
-                # LiDAR endpoint
-                direction_x = cos_yaw * cos_sampled_beam_angles[beam_index] - sin_yaw * sin_sampled_beam_angles[beam_index]
-                direction_y = sin_yaw * cos_sampled_beam_angles[beam_index] + cos_yaw * sin_sampled_beam_angles[beam_index]
-                
-                lidar_hit_x = particle_x + range_measurement * direction_x
-                lidar_hit_y = particle_y + range_measurement * direction_y
+                sensor_x = particle_x + self.baselink_to_laser[0] * cos_yaw - self.baselink_to_laser[1] * sin_yaw
+                sensor_y = particle_y + self.baselink_to_laser[0] * sin_yaw + self.baselink_to_laser[1] * cos_yaw
+                sensor_yaw = particle_yaw + self.baselink_to_laser[2]
+                direction_x = np.cos(sensor_yaw) * cos_sampled_beam_angles[beam_index] - np.sin(sensor_yaw) * sin_sampled_beam_angles[beam_index]
+                direction_y = np.sin(sensor_yaw) * cos_sampled_beam_angles[beam_index] + np.cos(sensor_yaw) * sin_sampled_beam_angles[beam_index]
+                lidar_hit_x = sensor_x + range_measurement * direction_x
+                lidar_hit_y = sensor_y + range_measurement * direction_y
                 
                 # Index
                 map_index_x = int(round((lidar_hit_x - map_origin_x) / map_resolution))
@@ -526,8 +532,8 @@ class MonteCarloLocalizer:
                 
                 if 0 <= map_index_x < map_width and 0 <= map_index_y < map_height:
                     distance_in_cells = distance_map[map_index_y, map_index_x]
-                    # distance_in_meters = float(distance_in_cells) * map_resolution
-                    distance_in_meters = float(distance_in_cells)
+                    distance_in_meters = float(distance_in_cells) * map_resolution
+                    # distance_in_meters = float(distance_in_cells)
                     
                     prob_hit = math.exp( -(distance_in_meters ** 2) * inv_denominator)
                     total_prob = self.z_hit * prob_hit + self.z_rand * (1.0 / self.scan_max_range)
