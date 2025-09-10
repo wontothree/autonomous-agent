@@ -253,7 +253,7 @@ class Map:
 1111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111
 1111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111
 """
-
+  
     def string_to_np_array_map(self, string_map: str) -> np.ndarray:
         return np.array([list(map(int, line)) 
                         for line in string_map.strip().splitlines() 
@@ -640,41 +640,24 @@ class MonteCarloLocalizer:
 
 
 
-class Agent:
-    def __init__(self, logger):
-        self.logger = logger
-        self.steps = 0
 
-        self.current_robot_pose = (0, 0, 0)
-        self.true_robot_pose = (0, 0, 0)
-        self.distance_error = 0
+# refactoring
+class AutonomousNavigator:
+    def __init__(self,
+        initial_robot_pose,
+        pollution_threshold=0.05
+        ):
+        self.pollution_threshold = pollution_threshold
 
-        # Map
-        self.map_id = None
-        self.room_num = None
-        self.map_origin = None
-        self.resolution = 0.01
+        # Class object
+        self.mcl = MonteCarloLocalizer()
 
         # Finite state machine
-        self.current_fsm_state = "READY"
         self.waypoints = []
         self.current_waypoint_index = 0
         self.tmp_target_position = None
-        self.optimal_next_node_index = None
         self.current_node_index = None
-        self.visited_node_indices = []
-
-        # Particle filter
-        self.particle_filter = MonteCarloLocalizer()
-        self.map_obj = Map()
-        self.occupancy_grid_map = None
-        self.distance_map = None
-
-        # Controller
-        self.last_angle_error = 0.0
-        self.integral_angle_error = 0.0
-        self.last_distance_error = 0.0
-        self.integral_distance_error = 0.0
+        self.optimal_next_node_index = None
 
         # test
         self.target_position = None
@@ -683,212 +666,23 @@ class Agent:
         self.tmp_end_node = 1
         self.max_localization_error = 0
 
-    def initialize_map(self, map_info: MapInfo):
-        """
-        매핑 정보를 전달받는 함수
-        시뮬레이션 (episode) 시작 시점에 호출됨
-
-        MapInfo: 매핑 정보를 저장한 클래스
-        ---
-        height: int, 맵의 높이 (격자 크기 단위)
-        width: int, 맵의 너비 (격자 크기 단위)
-        wall_grid: np.ndarray, 각 칸이 벽인지 여부를 저장하는 2차원 배열
-        room_grid: np.ndarray, 각 칸이 몇 번 방에 해당하는지 저장하는 2차원 배열
-        num_rooms: int, 방의 개수
-        grid_size: float, 격자 크기 (m)
-        grid_origin: (float, float), 실제 world의 origin이 wall_grid 격자의 어디에 해당하는지 표시
-        station_pos: (float, float), 청정 완료 후 복귀해야 하는 도크의 world 좌표
-        room_names: list of str, 각 방의 이름
-        pollution_end_time: float, 마지막 오염원 활동이 끝나는 시각
-        starting_pos: (float, float), 시뮬레이션 시작 시 로봇의 world 좌표
-        starting_angle: float, 시뮬레이션 시작 시 로봇의 각도 (x축 기준, 반시계 방향)
-
-        is_wall: (x, y) -> bool, 해당 좌표가 벽인지 여부를 반환하는 함수
-        get_room_id: (x, y) -> int, 해당 좌표가 속한 방의 ID를 반환하는 함수 (방에 속하지 않으면 -1 반환)
-        get_cells_in_room: (room_id) -> list of (x, y), 해당 방에 속한 모든 격자의 좌표를 반환하는 함수
-        grid2pos: (grid) -> (x, y), 격자 좌표를 실제 world 좌표로 변환하는 함수
-        pos2grid: (pos) -> (grid_x, grid_y), 실제 world 좌표를 격자 좌표로 변환하는 함수
-        ---
-        """
-        self.pollution_end_time = map_info.pollution_end_time
-
-        # Initialize robot pose
-        initial_robot_position = map_info.starting_pos
-        initial_robot_yaw = map_info.starting_angle
-        self.current_robot_pose = (initial_robot_position[0], initial_robot_position[1], initial_robot_yaw)
-
-        # Identify map
-        if map_info.num_rooms == 2: 
-            self.map_id = 0
-            self.room_num = 2
-            self.map_origin = (14, 20)
-            map = self.map_obj.ORIGINAL_STRING_MAP0
-            self.current_node_index = 2
-        elif map_info.num_rooms == 5: 
-            self.map_id = 1
-            self.room_num = 5
-            self.map_origin = (25, 25)
-            map = self.map_obj.ORIGINAL_STRING_MAP1
-            self.current_node_index = 5
-        elif map_info.num_rooms == 8:
-            self.map_id = 2
-            self.room_num = 8
-            self.map_origin = (37, 37)
-            map = self.map_obj.ORIGINAL_STRING_MAP2
-            self.current_node_index = 8
-        elif map_info.num_rooms == 13:
-            self.map_id = 3
-            self.room_num = 13
-            self.map_origin = (40, 50)
-            map = self.map_obj.ORIGINAL_STRING_MAP3
-            self.current_node_index = 13
-
-        self.log(self.room_num)
-
-        # Finite state machine
-        self.current_fsm_state = "READY"
-
-        # Particle filter
-        initial_pose = Pose(_x=self.current_robot_pose[0],
-                            _y=self.current_robot_pose[1],
-                            _yaw=self.current_robot_pose[2])
-        self.particle_filter.initialize_particles(initial_pose)
-        # Occupancy grid map and distance map
-        original_map = self.map_obj.string_to_np_array_map(map)
-        self.occupancy_grid_map = self.map_obj.upscale_occupancy_grid_map(original_map, 0.2 / self.resolution)
-        self.distance_map = self.map_obj.occupancy_grid_to_distance_map(self.occupancy_grid_map, map_resolution=self.resolution)
-
-    def act(self, observation: Observation):
-        """
-        env로부터 Observation을 전달받아 action을 반환하는 함수
-        매 step마다 호출됨
-
-        Observation: 로봇이 센서로 감지하는 정보를 저장한 dict
-        ---
-        sensor_lidar_front: np.ndarray, 전방 라이다 (241 x 1)
-        sensor_lidar_back: np.ndarray, 후방 라이다 (241 x 1)
-        sensor_tof_left: np.ndarray, 좌측 multi-tof (8 x 8)
-        sensor_tof_right: np.ndarray, 우측 multi-tof (8 x 8)
-        sensor_camera: np.ndarray, 전방 카메라 (480 x 640 x 3)
-        sensor_ray: float, 상향 1D 라이다
-        sensor_pollution: float, 로봇 내장 오염도 센서
-        air_sensor_pollution: np.ndarray, 거치형 오염도 센서 (방 개수 x 1)
-        disp_position: (float, float), 이번 step의 로봇의 위치 변위 (오차 포함)
-        disp_angle: float, 이번 step의 로봇의 각도 변위 (오차 포함)
-        ---
-
-        action: (MODE, LINEAR, ANGULAR)
-        MODE가 0인 경우: 이동 명령, Twist 컨트롤로 선속도(LINEAR) 및 각속도(ANGULAR) 조절. 최대값 1m/s, 2rad/s
-        MODE가 1인 경우: 청정 명령, 제자리에서 공기를 청정. LINEAR, ANGULAR는 무시됨. 청정 명령을 유지한 후 1초가 지나야 실제로 청정이 시작됨
-        """
-
-        # --------------------------------------------------
-        # Observation
-        # pollution data
-        air_sensor_pollution_data = observation['air_sensor_pollution']
-        robot_sensor_pollution_data =  observation['sensor_pollution']
-        pollution_end_time = self.pollution_end_time
-        # IMU data
-        delta_distance = np.linalg.norm(observation["disp_position"])
-        delta_yaw = observation['disp_angle']
-        # LiDAR data
-        scan_ranges = observation['sensor_lidar_front']
-
-        # Localization
-        self.localizer(delta_distance, delta_yaw, scan_ranges, self.occupancy_grid_map, self.distance_map)
-        current_robot_pose = self.current_robot_pose
-
-        # Current time
-        dt = 0.1
-        current_time = self.steps * dt
-
-        next_state, action = self.finite_state_machine(
-            air_sensor_pollution_data,
-            robot_sensor_pollution_data,
-            current_time,
-            pollution_end_time,
-            current_robot_pose,
-            self.current_fsm_state,
-            self.map_id,
-            self.room_num
-        )
-        self.current_fsm_state = next_state 
-        # --------------------------------------------------
-
-        # --------------------------------------------------
-        # --------------------------------------------------
-        # ------- 여기만 테스트 하세요 아빠 -------------------
-        # --------------------------------------------------
-        # --------------------------------------------------
-        # action = self.move_along_path(1, 3, self.map_id)
-        # --------------------------------------------------
-        # --------------------------------------------------
-        # --------------------------------------------------
-        # --------------------------------------------------
-        # --------------------------------------------------
-
-        self.steps += 1 
-        return action
-
-    def learn(
-            self,
-            observation: Observation,
-            info: Info,
-            action,
-            next_observation: Observation,
-            next_info: Info,
-            terminated,
-            done,
-            ):
-        """
-        실시간으로 훈련 상태를 전달받고 에이전트를 학습시키는 함수
-        training 중에만 매 step마다 호출되며(act 호출 후), test 중에는 호출되지 않음
-        강한 충돌(0.7m/s 이상 속도로 충돌)이 발생하면 시뮬레이션이 종료되고 terminated에 true가 전달됨 (실격)
-        도킹 스테이션에 도착하면 시뮬레이션이 종료되고 done에 true가 전달됨
-
-        Info: 센서 감지 정보 이외에 학습에 활용할 수 있는 정보 - 오직 training시에만 제공됨
-        ---
-        robot_position: (float, float), 로봇의 현재 world 좌표
-        robot_angle: float, 로봇의 현재 각도
-        collided: bool, 현재 로봇이 벽이나 물체에 충돌했는지 여부
-        all_pollution: np.ndarray, 거치형 에어 센서가 없는 방까지 포함한 오염도 정보
-        ---
-        """
-        # Only simulation
-        self.true_robot_pose = (info["robot_position"][0], info["robot_position"][1], info["robot_angle"])
-
-    def reset(self):
-        """
-        모델 상태 등을 초기화하는 함수
-        training시, 각 episode가 끝날 때마다 호출됨 (initialize_map 호출 전)
-        """
-        self.steps = 0
-
-    def log(self, msg):
-        """
-        터미널에 로깅하는 함수. print를 사용하면 비정상적으로 출력됨.
-        ROS Node의 logger를 호출.
-        """
-        self.logger(str(msg))
-
-    # ----------------------------------------------------------------------------------------------------
-    # New defined functions
-
+        # Monte carlo localization
+        self.mcl.initialize_particles(initial_robot_pose)
+    
     def mission_planner(
             self, 
-            air_sensor_pollution_data, 
-            robot_sensor_pollution_data, 
+            air_pollution_sensor_data, 
+            robot_pollution_sensor_data, 
             current_node_index,
             map_id,
-            room_num,
-            pollution_threshold=0.05
-            ):
+            room_num
+        ):
         """
         미션 플래너: 오염 감지된 방들을 기반으로 TSP 순서에 따라 task queue 생성
 
         Parameters:
-        - air_sensor_pollution_data: list of float, 각 방의 공기 센서 오염 수치
-        - robot_sensor_pollution_data: list of float, 로봇 센서 오염 수치 (현재 사용 안 함)
+        - air_pollution_sensor_data: list of float, 각 방의 공기 센서 오염 수치
+        - robot_pollution_sensor_data: list of float, 로봇 센서 오염 수치 (현재 사용 안 함)
         - current_node_index: int, 현재 방(room)의 ID
         - map_id: 0, 1, 2, 3
 
@@ -948,7 +742,7 @@ class Agent:
         # Polluted regions
         observed_polluted_regions = [
             room_id for room_id in range(room_num)
-            if air_sensor_pollution_data[room_id] > pollution_threshold
+            if air_pollution_sensor_data[room_id] > self.pollution_threshold
         ]
 
         if not observed_polluted_regions:
@@ -1031,7 +825,7 @@ class Agent:
                 (4, 2): [(3.9, 2.2), (3.9, -0.8), (-1.57, -0.8), (-1.57, 0.8), (-2.4, 2.4)],
                 (4, 3): [(3.9, 2.2), (3.9, -0.8), (-0.62, -0.8), (-0.61, 0.8), (0.9, 0.9), (1.0, 2.8)],
                 (4, 5): [(3.9, 2.2), (3.9, -0.8), (0.8, -0.8), (0, -2)],
-                (4, 6): [(3.9, 2.2), (3.9, -0.8), (2.6, -0.8), (2.6, -4.2)],
+                (4, 6): [(3.9, 2.2), (3.9, -0.9), (1.0, -0.9), (1.0, -4.0), (2.6, -4.2)],
 
                 (5, 0): [(0, -2), (-0.2, -2.0)],
                 (5, 1): [(0, -2), (-1.6, -3.4), (-2.77, -3.4), (-2.77, -2.2)],               
@@ -1041,199 +835,95 @@ class Agent:
                 (5, 6): [(0, -2), (0.8, -3.6), (2.8, -4.2)],
             },
             2: {
-                # (0, 1): [(3.8, 1.8), (-1.0, 1.6), (-2.4, 2.4), (-2.4, 4.8)],               
-                # (0, 2): [(3.8, 1.8), (-4.2, -1.0), (-5.8, -1.0), (-5.8, 1.8)],
-                # (0, 3): [(3.8, 1.8), (-4.2, -1.0), (-4.8, -1.6), (-5.2, -5.0)],
-                # (0, 4): [(3.8, 1.8), (-2.8, -1.0), (-3.4, -1.6), (-3.4, -2.2), (-1.8, -3.4)],
-                # (0, 5): [(3.8, 1.8), (0.2, -1.6), (0.8, -4.4), (0.2, -6.0), (-1.2, -6.0)],
-                # (0, 6): [(3.8, 1.8), (0.2, -1.6), (0.8, -5.0)],
-                # (0, 7): [(3.8, 1.8), (5.6, 4.6), (6.0, 5.2)],
-                # (0, 8): [(3.8, 1.8), (3, 3)],
-                # (0, 9): [(3.8, 1.8), (-0.2, 6.4)],
+                (0, 1): [(3.8, 1.8), (-1.0, 1.6), (-2.4, 2.4), (-2.4, 4.8)],               
+                (0, 2): [(3.8, 1.8), (-4.2, -1.0), (-5.8, -1.0), (-5.8, 1.8)],
+                (0, 3): [(3.8, 1.8), (-4.2, -1.0), (-4.8, -1.6), (-5.2, -5.0)],
+                (0, 4): [(3.8, 1.8), (-2.8, -1.0), (-3.4, -1.6), (-3.4, -2.2), (-1.8, -3.4)],
+                (0, 5): [(3.8, 1.8), (0.2, -1.6), (0.8, -4.4), (0.2, -6.0), (-1.2, -6.0)],
+                (0, 6): [(3.8, 1.8), (0.2, -1.6), (0.8, -5.0)],
+                (0, 7): [(3.8, 1.8), (5.6, 4.6), (6.0, 5.2)],
+                (0, 8): [(3.8, 1.8), (3, 3)],
+                (0, 9): [(3.8, 1.8), (-0.2, 6.4)],
 
-                # (1, 0): [(-2.4, 4.8), (-2.4, 2.4), (-1.0, 1.6), (3.8, 1.8)],
-                # (1, 2): [(-2.4, 4.8), (-2.4, 2.4), (-4.2, -1.0), (-5.8, -1.0), (-5.8, 1.8)],
-                # (1, 3): [(-2.4, 4.8), (-2.4, 2.4), (-4.2, -1.0), (-4.8, -1.6), (-5.2, -5.0)],
-                # (1, 4): [(-2.4, 4.8), (-2.4, 2.4), (-3.4, -1.6), (-3.4, -2.2), (-1.8, -3.4)],
-                # (1, 5): [(-2.4, 4.8), (-2.4, 2.4), (-0.4, -1.0), (0.2, -1.6), (0.8, -4.4), (0.2, -6.0), (-1.2, -6.0)],
-                # (1, 6): [(-2.4, 4.8), (-2.4, 2.4), (-0.4, -1.0), (0.2, -1.6), (0.8, -5.0)],
-                # (1, 7): [(-2.4, 4.8), (-2.4, 2.4), (-1.0, 1.6), (5.6, 4.6), (6.0, 5.2)],
-                # (1, 8): [(-2.4, 4.8), (-2.4, 2.4), (-1.0, 1.6), (3, 3)],
-                # (1, 9): [(-2.4, 4.8), (-2.4, 2.4), (-1.0, 1.6), (-0.2, 1.0), (-0.2, 6.4)],
+                (1, 0): [(-2.4, 4.8), (-2.4, 2.4), (-1.0, 1.6), (3.8, 1.8)],
+                (1, 2): [(-2.4, 4.8), (-2.4, 2.4), (-4.2, -1.0), (-5.8, -1.0), (-5.8, 1.8)],
+                (1, 3): [(-2.4, 4.8), (-2.4, 2.4), (-4.2, -1.0), (-4.8, -1.6), (-5.2, -5.0)],
+                (1, 4): [(-2.4, 4.8), (-2.4, 2.4), (-3.4, -1.6), (-3.4, -2.2), (-1.8, -3.4)],
+                (1, 5): [(-2.4, 4.8), (-2.4, 2.4), (-0.4, -1.0), (0.2, -1.6), (0.8, -4.4), (0.2, -6.0), (-1.2, -6.0)],
+                (1, 6): [(-2.4, 4.8), (-2.4, 2.4), (-0.4, -1.0), (0.2, -1.6), (0.8, -5.0)],
+                (1, 7): [(-2.4, 4.8), (-2.4, 2.4), (-1.0, 1.6), (5.6, 4.6), (6.0, 5.2)],
+                (1, 8): [(-2.4, 4.8), (-2.4, 2.4), (-1.0, 1.6), (3, 3)],
+                (1, 9): [(-2.4, 4.8), (-2.4, 2.4), (-1.0, 1.6), (-0.2, 1.0), (-0.2, 6.4)],
                             
-                # (2, 0): [(-5.8, 1.8), (-5.8, -1.0), (-4.2, -1.0), (3.8, 1.8)],			
-                # (2, 1): [(-5.8, 1.8), (-5.8, -1.0), (-4.2, -1.0), (-2.4, 2.4), (-2.4, 4.8)],
-                # (2, 3): [(-5.8, 1.8), (-5.8, -1.0), (-4.8, -1.6), (-5.2, -5.0)],
-                # (2, 4): [(-5.8, 1.8), (-5.8, -1.0), (-4.2, -1.0), (-3.4, -1.6), (-3.4, -2.2), (-1.8, -3.4)],
-                # (2, 5): [(-5.8, 1.8), (-5.8, -1.0), (-0.4, -1.0), (0.2, -1.6), (0.8, -4.4), (0.2, -6.0), (-1.2, -6.0)],
-                # (2, 6): [(-5.8, 1.8), (-5.8, -1.0), (-0.4, -1.0), (0.2, -1.6), (0.8, -5.0)],
-                # (2, 7): [(-5.8, 1.8), (-5.8, -1.0), (-4.2, -1.0), (5.6, 4.6), (6.0, 5.2)],
-                # (2, 8): [(-5.8, 1.8), (-5.8, -1.0), (-4.2, -1.0), (3, 3)],
-                # (2, 9): [(-5.8, 1.8), (-5.8, -1.0), (-4.2, -1.0), (-0.2, 1.0), (-0.2, 6.4)],		
+                (2, 0): [(-5.8, 1.8), (-5.8, -1.0), (-4.2, -1.0), (3.8, 1.8)],			
+                (2, 1): [(-5.8, 1.8), (-5.8, -1.0), (-4.2, -1.0), (-2.4, 2.4), (-2.4, 4.8)],
+                (2, 3): [(-5.8, 1.8), (-5.8, -1.0), (-4.8, -1.6), (-5.2, -5.0)],
+                (2, 4): [(-5.8, 1.8), (-5.8, -1.0), (-4.2, -1.0), (-3.4, -1.6), (-3.4, -2.2), (-1.8, -3.4)],
+                (2, 5): [(-5.8, 1.8), (-5.8, -1.0), (-0.4, -1.0), (0.2, -1.6), (0.8, -4.4), (0.2, -6.0), (-1.2, -6.0)],
+                (2, 6): [(-5.8, 1.8), (-5.8, -1.0), (-0.4, -1.0), (0.2, -1.6), (0.8, -5.0)],
+                (2, 7): [(-5.8, 1.8), (-5.8, -1.0), (-4.2, -1.0), (5.6, 4.6), (6.0, 5.2)],
+                (2, 8): [(-5.8, 1.8), (-5.8, -1.0), (-4.2, -1.0), (3, 3)],
+                (2, 9): [(-5.8, 1.8), (-5.8, -1.0), (-4.2, -1.0), (-0.2, 1.0), (-0.2, 6.4)],		
                     
-                # (3, 0): [(-5.2, -5.0), (-4.8, -1.6), (-4.2, -1.0), (3.8, 1.8)],	
-                # (3, 1): [(-5.2, -5.0), (-4.8, -1.6), (-4.2, -1.0), (-2.4, 2.4), (-2.4, 4.8)],
-                # (3, 2): [(-5.2, -5.0), (-4.8, -1.6), (-5.8, -1.0), (-5.8, 1.8)],
-                # (3, 4): [(-5.2, -5.0), (-4.8, -1.6), (-4.2, -1.0), (-3.4, -1.6), (-3.4, -2.2), (-1.8, -3.4)],
-                # (3, 5): [(-5.2, -5.0), (-4.8, -1.6), (-4.2, -1.0), (-0.4, -1.0), (0.2, -1.6), (0.8, -4.4), (0.2, -6.0), (-1.2, -6.0)],
-                # (3, 6): [(-5.2, -5.0), (-4.8, -1.6), (-4.2, -1.0), (-0.4, -1.0), (0.2, -1.6), (0.8, -5.0)],
-                # (3, 7): [(-5.2, -5.0), (-4.8, -1.6), (-4.2, -1.0), (5.6, 4.6), (6.0, 5.2)],
-                # (3, 8): [(-5.2, -5.0), (-4.8, -1.6), (-4.2, -1.0), (3, 3)],
-                # (3, 9): [(-5.2, -5.0), (-4.8, -1.6), (-4.2, -1.0), (-0.2, 1.0), (-0.2, 6.4)],
+                (3, 0): [(-5.2, -5.0), (-4.8, -1.6), (-4.2, -1.0), (3.8, 1.8)],	
+                (3, 1): [(-5.2, -5.0), (-4.8, -1.6), (-4.2, -1.0), (-2.4, 2.4), (-2.4, 4.8)],
+                (3, 2): [(-5.2, -5.0), (-4.8, -1.6), (-5.8, -1.0), (-5.8, 1.8)],
+                (3, 4): [(-5.2, -5.0), (-4.8, -1.6), (-4.2, -1.0), (-3.4, -1.6), (-3.4, -2.2), (-1.8, -3.4)],
+                (3, 5): [(-5.2, -5.0), (-4.8, -1.6), (-4.2, -1.0), (-0.4, -1.0), (0.2, -1.6), (0.8, -4.4), (0.2, -6.0), (-1.2, -6.0)],
+                (3, 6): [(-5.2, -5.0), (-4.8, -1.6), (-4.2, -1.0), (-0.4, -1.0), (0.2, -1.6), (0.8, -5.0)],
+                (3, 7): [(-5.2, -5.0), (-4.8, -1.6), (-4.2, -1.0), (5.6, 4.6), (6.0, 5.2)],
+                (3, 8): [(-5.2, -5.0), (-4.8, -1.6), (-4.2, -1.0), (3, 3)],
+                (3, 9): [(-5.2, -5.0), (-4.8, -1.6), (-4.2, -1.0), (-0.2, 1.0), (-0.2, 6.4)],
 
-                # (4, 0): [(-1.8, -3.4), (-3.4, -2.2), (-3.4, -1.6), (-2.8, -1.0), (3.8, 1.8)],
-                # (4, 1): [(-1.8, -3.4), (-3.4, -2.2), (-3.4, -1.6), (-2.4, 2.4), (-2.4, 4.8)],
-                # (4, 2): [(-1.8, -3.4), (-3.4, -2.2), (-3.4, -1.6), (-4.2, -1.0), (-5.8, -1.0), (-5.8, 1.8)],
-                # (4, 3): [(-1.8, -3.4), (-3.4, -2.2), (-3.4, -1.6), (-4.2, -1.0), (-4.8, -1.6), (-5.2, -5.0)],
-                # (4, 5): [(-1.8, -3.4), (-3.4, -2.2), (-3.4, -1.6), (-2.8, -1.0), (-0.4, -1.0), (0.2, -1.6), (0.8, -4.4), (0.2, -6.0), (-1.2, -6.0)],
-                # (4, 6): [(-1.8, -3.4), (-3.4, -2.2), (-3.4, -1.6), (-2.8, -1.0), (-0.4, -1.0), (0.2, -1.6), (0.8, -5.0)],
-                # (4, 7): [(-1.8, -3.4), (-3.4, -2.2), (-3.4, -1.6), (-2.8, -1.0), (5.6, 4.6), (6.0, 5.2)],
-                # (4, 8): [(-1.8, -3.4), (-3.4, -2.2), (-3.4, -1.6), (-2.8, -1.0), (3, 3)],
-                # (4, 9): [(-1.8, -3.4), (-3.4, -2.2), (-3.4, -1.6), (-2.8, -1.0), (-0.2, 1.0), (-0.2, 6.4)],
+                (4, 0): [(-1.8, -3.4), (-3.4, -2.2), (-3.4, -1.6), (-2.8, -1.0), (3.8, 1.8)],
+                (4, 1): [(-1.8, -3.4), (-3.4, -2.2), (-3.4, -1.6), (-2.4, 2.4), (-2.4, 4.8)],
+                (4, 2): [(-1.8, -3.4), (-3.4, -2.2), (-3.4, -1.6), (-4.2, -1.0), (-5.8, -1.0), (-5.8, 1.8)],
+                (4, 3): [(-1.8, -3.4), (-3.4, -2.2), (-3.4, -1.6), (-4.2, -1.0), (-4.8, -1.6), (-5.2, -5.0)],
+                (4, 5): [(-1.8, -3.4), (-3.4, -2.2), (-3.4, -1.6), (-2.8, -1.0), (-0.4, -1.0), (0.2, -1.6), (0.8, -4.4), (0.2, -6.0), (-1.2, -6.0)],
+                (4, 6): [(-1.8, -3.4), (-3.4, -2.2), (-3.4, -1.6), (-2.8, -1.0), (-0.4, -1.0), (0.2, -1.6), (0.8, -5.0)],
+                (4, 7): [(-1.8, -3.4), (-3.4, -2.2), (-3.4, -1.6), (-2.8, -1.0), (5.6, 4.6), (6.0, 5.2)],
+                (4, 8): [(-1.8, -3.4), (-3.4, -2.2), (-3.4, -1.6), (-2.8, -1.0), (3, 3)],
+                (4, 9): [(-1.8, -3.4), (-3.4, -2.2), (-3.4, -1.6), (-2.8, -1.0), (-0.2, 1.0), (-0.2, 6.4)],
 
-                # (5, 0): [(-1.2, -6.0), (0.2, -6.0), (0.8, -4.4), (0.2, -1.6), (3.8, 1.8)],
-                # (5, 1): [(-1.2, -6.0), (0.2, -6.0), (0.8, -4.4), (0.2, -1.6), (-2.4, 2.4), (-2.4, 4.8)],           
-                # (5, 2): [(-1.2, -6.0), (0.2, -6.0), (0.8, -4.4), (0.2, -1.6), (-0.4, -1.0), (-5.8, -1.0), (-5.8, 1.8)],
-                # (5, 3): [(-1.2, -6.0), (0.2, -6.0), (0.8, -4.4), (0.2, -1.6), (-0.4, -1.0), (-4.2, -1.0), (-4.8, -1.6), (-5.2, -5.0)],
-                # (5, 4): [(-1.2, -6.0), (0.2, -6.0), (0.8, -4.4), (0.2, -1.6), (-0.4, -1.0), (-2.8, -1.0), (-3.4, -1.6), (-3.4, -2.2), (-1.8, -3.4)],
-                # (5, 6): [(-1.2, -6.0), (0.2, -6.0), (0.8, -5.0)],
-                # (5, 7): [(-1.2, -6.0), (0.2, -6.0), (0.8, -4.4), (0.2, -1.6), (5.6, 4.6), (6.0, 5.2)],
-                # (5, 8): [(-1.2, -6.0), (0.2, -6.0), (0.8, -4.4), (0.2, -1.6), (3, 3)],
-                # (5, 9): [(-1.2, -6.0), (0.2, -6.0), (0.8, -4.4), (0.2, -1.6), (-0.2, 6.4)],
+                (5, 0): [(-1.2, -6.0), (0.2, -6.0), (0.8, -4.4), (0.2, -1.6), (3.8, 1.8)],
+                (5, 1): [(-1.2, -6.0), (0.2, -6.0), (0.8, -4.4), (0.2, -1.6), (-2.4, 2.4), (-2.4, 4.8)],           
+                (5, 2): [(-1.2, -6.0), (0.2, -6.0), (0.8, -4.4), (0.2, -1.6), (-0.4, -1.0), (-5.8, -1.0), (-5.8, 1.8)],
+                (5, 3): [(-1.2, -6.0), (0.2, -6.0), (0.8, -4.4), (0.2, -1.6), (-0.4, -1.0), (-4.2, -1.0), (-4.8, -1.6), (-5.2, -5.0)],
+                (5, 4): [(-1.2, -6.0), (0.2, -6.0), (0.8, -4.4), (0.2, -1.6), (-0.4, -1.0), (-2.8, -1.0), (-3.4, -1.6), (-3.4, -2.2), (-1.8, -3.4)],
+                (5, 6): [(-1.2, -6.0), (0.2, -6.0), (0.8, -5.0)],
+                (5, 7): [(-1.2, -6.0), (0.2, -6.0), (0.8, -4.4), (0.2, -1.6), (5.6, 4.6), (6.0, 5.2)],
+                (5, 8): [(-1.2, -6.0), (0.2, -6.0), (0.8, -4.4), (0.2, -1.6), (3, 3)],
+                (5, 9): [(-1.2, -6.0), (0.2, -6.0), (0.8, -4.4), (0.2, -1.6), (-0.2, 6.4)],
 
-                # (6, 0): [(0.8, -5.0), (0.2, -1.6), (3.8, 1.8)],
-                # (6, 1): [(0.8, -5.0), (0.2, -1.6), (-2.4, 2.4), (-2.4, 4.8)],              
-                # (6, 2): [(0.8, -5.0), (0.2, -1.6), (-0.4, -1.0), (-5.8, -1.0), (-5.8, 1.8)],
-                # (6, 3): [(0.8, -5.0), (0.2, -1.6), (-0.4, -1.0), (-4.2, -1.0), (-4.8, -1.6), (-5.2, -5.0)],
-                # (6, 4): [(0.8, -5.0), (0.2, -1.6), (-0.4, -1.0), (-2.8, -1.0), (-3.4, -1.6), (-3.4, -2.2), (-1.8, -3.4)],
-                # (6, 5): [(0.8, -5.0), (0.2, -6.0), (-1.2, -6.0)],
-                # (6, 7): [(0.8, -5.0), (0.2, -1.6), (5.6, 4.6), (6.0, 5.2)],
-                # (6, 8): [(0.8, -5.0), (0.2, -1.6), (3, 3)],
-                # (6, 9): [(0.8, -5.0), (0.2, -1.6), (-0.2, 6.4)],
+                (6, 0): [(0.8, -5.0), (0.2, -1.6), (3.8, 1.8)],
+                (6, 1): [(0.8, -5.0), (0.2, -1.6), (-2.4, 2.4), (-2.4, 4.8)],              
+                (6, 2): [(0.8, -5.0), (0.2, -1.6), (-0.4, -1.0), (-5.8, -1.0), (-5.8, 1.8)],
+                (6, 3): [(0.8, -5.0), (0.2, -1.6), (-0.4, -1.0), (-4.2, -1.0), (-4.8, -1.6), (-5.2, -5.0)],
+                (6, 4): [(0.8, -5.0), (0.2, -1.6), (-0.4, -1.0), (-2.8, -1.0), (-3.4, -1.6), (-3.4, -2.2), (-1.8, -3.4)],
+                (6, 5): [(0.8, -5.0), (0.2, -6.0), (-1.2, -6.0)],
+                (6, 7): [(0.8, -5.0), (0.2, -1.6), (5.6, 4.6), (6.0, 5.2)],
+                (6, 8): [(0.8, -5.0), (0.2, -1.6), (3, 3)],
+                (6, 9): [(0.8, -5.0), (0.2, -1.6), (-0.2, 6.4)],
 
-                # (7, 0): [(6.0, 5.2), (5.6, 4.6), (3.8, 1.8)],
-                # (7, 1): [(6.0, 5.2), (5.6, 4.6), (-1.0, 1.6), (-2.4, 2.4), (-2.4, 4.8)],                
-                # (7, 2): [(6.0, 5.2), (5.6, 4.6), (-4.2, -1.0), (-5.8, -1.0), (-5.8, 1.8)],
-                # (7, 3): [(6.0, 5.2), (5.6, 4.6), (-4.2, -1.0), (-4.8, -1.6), (-5.2, -5.0)],
-                # (7, 4): [(6.0, 5.2), (5.6, 4.6), (-2.8, -1.0), (-3.4, -1.6), (-3.4, -2.2), (-1.8, -3.4)],
-                # (7, 5): [(6.0, 5.2), (5.6, 4.6), (0.2, -1.6), (0.8, -4.4), (0.2, -6.0), (-1.2, -6.0)],
-                # (7, 6): [(6.0, 5.2), (5.6, 4.6), (0.2, -1.6), (0.8, -5.0)],
-                # (7, 8): [(6.0, 5.2), (5.6, 4.6), (3, 3)],
-                # (7, 9): [(6.0, 5.2), (5.6, 4.6), (-0.2, 6.4)],
+                (7, 0): [(6.0, 5.2), (5.6, 4.6), (3.8, 1.8)],
+                (7, 1): [(6.0, 5.2), (5.6, 4.6), (-1.0, 1.6), (-2.4, 2.4), (-2.4, 4.8)],                
+                (7, 2): [(6.0, 5.2), (5.6, 4.6), (-4.2, -1.0), (-5.8, -1.0), (-5.8, 1.8)],
+                (7, 3): [(6.0, 5.2), (5.6, 4.6), (-4.2, -1.0), (-4.8, -1.6), (-5.2, -5.0)],
+                (7, 4): [(6.0, 5.2), (5.6, 4.6), (-2.8, -1.0), (-3.4, -1.6), (-3.4, -2.2), (-1.8, -3.4)],
+                (7, 5): [(6.0, 5.2), (5.6, 4.6), (0.2, -1.6), (0.8, -4.4), (0.2, -6.0), (-1.2, -6.0)],
+                (7, 6): [(6.0, 5.2), (5.6, 4.6), (0.2, -1.6), (0.8, -5.0)],
+                (7, 8): [(6.0, 5.2), (5.6, 4.6), (3, 3)],
+                (7, 9): [(6.0, 5.2), (5.6, 4.6), (-0.2, 6.4)],
 
-                # (8, 0): [(3, 3), (3.8, 1.8)],
-                # (8, 1): [(3, 3), (-1.0, 1.6), (-2.4, 2.4), (-2.4, 4.8)],               
-                # (8, 2): [(3, 3), (-4.2, -1.0), (-5.8, -1.0), (-5.8, 1.8)],
-                # (8, 3): [(3, 3), (-4.2, -1.0), (-4.8, -1.6), (-5.2, -5.0)],
-                # (8, 4): [(3, 3), (-2.8, -1.0), (-3.4, -1.6), (-3.4, -2.2), (-1.8, -3.4)],
-                # (8, 5): [(3, 3), (0.2, -1.6), (0.8, -4.4), (0.2, -6.0), (-1.2, -6.0)],
-                # (8, 6): [(3, 3), (0.2, -1.6), (0.8, -5.0)],
-                # (8, 7): [(3, 3), (5.6, 4.6), (6.0, 5.2)],
-                # (8, 9): [(3, 3), (-0.2, 6.4)],
-
-                (0, 0): [(-40, 0)],
-                (0, 1): [(-40, 0)],
-                (0, 2): [(-40, 0)],
-                (0, 3): [(-40, 0)],
-                (0, 4): [(-40, 0)],
-                (0, 5): [(-40, 0)],
-                (0, 6): [(-40, 0)],
-                (0, 7): [(-40, 0)],
-                (0, 8): [(-40, 0)],
-                (0, 9): [(-40, 0)],
-                (0, 10): [(-40, 0)],
-                (0, 11): [(-40, 0)],
-                (0, 12): [(-40, 0)],
-                (0, 13): [(-40, 0)],
-                (0, 14): [(-40, 0)],
-
-                (1, 0): [(-40, 0)],
-                (1, 1): [(-40, 0)],
-                (1, 2): [(-40, 0)],
-                (1, 3): [(-40, 0)],
-                (1, 4): [(-40, 0)],
-                (1, 5): [(-40, 0)],
-                (1, 6): [(-40, 0)],
-                (1, 7): [(-40, 0)],
-                (1, 8): [(-40, 0)],
-                (1, 9): [(-40, 0)],
-
-                (2, 0): [(-40, 0)],
-                (2, 1): [(-40, 0)],
-                (2, 2): [(-40, 0)],
-                (2, 3): [(-40, 0)],
-                (2, 4): [(-40, 0)],
-                (2, 5): [(-40, 0)],
-                (2, 6): [(-40, 0)],
-                (2, 7): [(-40, 0)],
-                (2, 8): [(-40, 0)],
-                (2, 9): [(-40, 0)],
-
-                (3, 0): [(-40, 0)],
-                (3, 1): [(-40, 0)],
-                (3, 2): [(-40, 0)],
-                (3, 3): [(-40, 0)],
-                (3, 4): [(-40, 0)],
-                (3, 5): [(-40, 0)],
-                (3, 6): [(-40, 0)],
-                (3, 7): [(-40, 0)],
-                (3, 8): [(-40, 0)],
-                (3, 9): [(-40, 0)],
-
-                (4, 0): [(-40, 0)],
-                (4, 1): [(-40, 0)],
-                (4, 2): [(-40, 0)],
-                (4, 3): [(-40, 0)],
-                (4, 4): [(-40, 0)],
-                (4, 5): [(-40, 0)],
-                (4, 6): [(-40, 0)],
-                (4, 7): [(-40, 0)],
-                (4, 8): [(-40, 0)],
-                (4, 9): [(-40, 0)],
-
-                (5, 0): [(-40, 0)],
-                (5, 1): [(-40, 0)],
-                (5, 2): [(-40, 0)],
-                (5, 3): [(-40, 0)],
-                (5, 4): [(-40, 0)],
-                (5, 5): [(-40, 0)],
-                (5, 6): [(-40, 0)],
-                (5, 7): [(-40, 0)],
-                (5, 8): [(-40, 0)],
-                (5, 9): [(-40, 0)],
-
-                (6, 0): [(-40, 0)],
-                (6, 1): [(-40, 0)],
-                (6, 2): [(-40, 0)],
-                (6, 3): [(-40, 0)],
-                (6, 4): [(-40, 0)],
-                (6, 5): [(-40, 0)],
-                (6, 6): [(-40, 0)],
-                (6, 7): [(-40, 0)],
-                (6, 8): [(-40, 0)],
-                (6, 9): [(-40, 0)],
-
-                (7, 0): [(-40, 0)],
-                (7, 1): [(-40, 0)],
-                (7, 2): [(-40, 0)],
-                (7, 3): [(-40, 0)],
-                (7, 4): [(-40, 0)],
-                (7, 5): [(-40, 0)],
-                (7, 6): [(-40, 0)],
-                (7, 7): [(-40, 0)],
-                (7, 8): [(-40, 0)],
-                (7, 9): [(-40, 0)],
-
-                (8, 0): [(-40, 0)],
-                (8, 1): [(-40, 0)],
-                (8, 2): [(-40, 0)],
-                (8, 3): [(-40, 0)],
-                (8, 4): [(-40, 0)],
-                (8, 5): [(-40, 0)],
-                (8, 6): [(-40, 0)],
-                (8, 7): [(-40, 0)],
-                (8, 8): [(-40, 0)],
-                (8, 9): [(-40, 0)],
+                (8, 0): [(3, 3), (3.8, 1.8)],
+                (8, 1): [(3, 3), (-1.0, 1.6), (-2.4, 2.4), (-2.4, 4.8)],               
+                (8, 2): [(3, 3), (-4.2, -1.0), (-5.8, -1.0), (-5.8, 1.8)],
+                (8, 3): [(3, 3), (-4.2, -1.0), (-4.8, -1.6), (-5.2, -5.0)],
+                (8, 4): [(3, 3), (-2.8, -1.0), (-3.4, -1.6), (-3.4, -2.2), (-1.8, -3.4)],
+                (8, 5): [(3, 3), (0.2, -1.6), (0.8, -4.4), (0.2, -6.0), (-1.2, -6.0)],
+                (8, 6): [(3, 3), (0.2, -1.6), (0.8, -5.0)],
+                (8, 7): [(3, 3), (5.6, 4.6), (6.0, 5.2)],
+                (8, 9): [(3, 3), (-0.2, 6.4)],
             },
             3: {
                 (0, 0): [(0, 0)],
@@ -1495,23 +1185,24 @@ class Agent:
                 max_linear=1, max_angular=1.0,
                 angle_threshold=0.2):
         """
-        목표 방향을 먼저 향하도록 하고, 방향이 맞으면 직진.
+        Turn and go to goal
         """
         x, y, theta = current_robot_pose
         target_x, target_y = target_position
 
+        # Position error
         dx = target_x - x
         dy = target_y - y
         distance = math.hypot(dx, dy)
         target_angle = math.atan2(dy, dx)
 
-        # 방향 오차
+        # Direction error
         angle_error = target_angle - theta
         angle_error = math.atan2(math.sin(angle_error), math.cos(angle_error))  # -pi ~ pi
 
-        # 방향 우선 제어
         if abs(angle_error) > angle_threshold:
-            linear_velocity = 0.0  # 먼저 회전
+            # 방향 우선 제어
+            linear_velocity = 0.0 
             angular_velocity = max(-max_angular, min(max_angular, angular_gain * angle_error))
         else:
             linear_velocity = max(-max_linear, min(max_linear, linear_gain * distance))
@@ -1519,59 +1210,17 @@ class Agent:
 
         return linear_velocity, angular_velocity
 
-    def localizer(self, delta_distance, delta_yaw, scan_ranges, occupancy_grid_map, distance_map):
-        """
-        Localization by Particle Filter
-        """
-        # Basic
-        # x, y, yaw = self.current_robot_pose
-
-        # new_x = x + delta_distance * math.cos(yaw)
-        # new_y = y + delta_distance * math.sin(yaw)
-        # new_yaw = (yaw + delta_yaw + math.pi) % (2 * math.pi) - math.pi
-        # self.current_robot_pose = (new_x, new_y, new_yaw)
-
-        # Localization by Particle Filter
-        self.particle_filter.update_particles_by_motion_model(delta_distance, delta_yaw)
-        self.particle_filter.update_weights_by_measurement_model(
-            scan_ranges=scan_ranges,
-            occupancy_grid_map=occupancy_grid_map,
-            distance_map=distance_map,
-            map_origin=self.map_origin,
-            map_resolution=self.resolution
-        )
-        estimated_x, estimated_y, estimated_yaw = self.particle_filter.estimate_robot_pose()
-        self.current_robot_pose = (estimated_x, estimated_y, estimated_yaw)
-        self.particle_filter.resample_particles()
-
-        # Print error
-        if True:
-            if (
-                self.true_robot_pose is None 
-                or self.current_robot_pose is None
-                or None in self.true_robot_pose
-                or None in self.current_robot_pose
-            ):
-                return
-
-            dx = self.current_robot_pose[0] - self.true_robot_pose[0]
-            dy = self.current_robot_pose[1] - self.true_robot_pose[1]
-            self.distance_error = math.hypot(dx, dy)
-            if self.distance_error > self.max_localization_error: self.max_localization_error = self.distance_error
-            # self.log(f"PF Error: {distance_error:.3f}, MAX Error: {self.max_localization_error}")
-
     # Main Logic
     def finite_state_machine(self,
-            air_sensor_pollution_data,
-            robot_sensor_pollution_data,
-            current_time,
-            pollution_end_time,
-            current_robot_pose, 
-            current_fsm_state,
-            map_id,
-            room_num,
-            pollution_threshold=0.05 
-            ):
+        air_pollution_sensor_data,
+        robot_pollution_sensor_data,
+        current_time,
+        pollution_end_time,
+        current_robot_pose, 
+        current_fsm_state,
+        map_id,
+        room_num
+        ):
         """
         current_fsm_state -> next_fsm_state, action
         """
@@ -1600,11 +1249,11 @@ class Agent:
             """
             return calculate_distance_to_target_position(current_position, target_position) < threshold
         
-        def are_no_polluted_rooms(air_sensor_pollution_data):
+        def are_no_polluted_rooms(air_pollution_sensor_data):
             """
             Decide if there are polluted rooms
             """
-            return all(pollution <= 0 for pollution in air_sensor_pollution_data) # True: there are no polluted rooms
+            return all(pollution <= 0 for pollution in air_pollution_sensor_data) # True: there are no polluted rooms
 
         current_robot_position = current_robot_pose[0], current_robot_pose[1]
 
@@ -1613,13 +1262,14 @@ class Agent:
         # ---------------------------------------------------------------------------- #
         if current_fsm_state == FSM_READY:
             # Mission planning
+            self.current_node_index = initial_node_index
             optimal_visit_order = self.mission_planner(
-                air_sensor_pollution_data, 
-                robot_sensor_pollution_data, 
-                current_node_index=initial_node_index,
-                map_id=map_id,
-                room_num=room_num
-                )
+                air_pollution_sensor_data, 
+                robot_pollution_sensor_data, 
+                self.current_node_index,
+                map_id,
+                room_num
+            )
 
             # State transition
             # READY -> NAVIGATING
@@ -1665,8 +1315,8 @@ class Agent:
         elif current_fsm_state == FSM_CLEANING:
             # Mission planning
             optimal_visit_order = self.mission_planner(
-                air_sensor_pollution_data, 
-                robot_sensor_pollution_data, 
+                air_pollution_sensor_data, 
+                robot_pollution_sensor_data, 
                 current_node_index=self.current_node_index,
                 map_id=map_id,
                 room_num=room_num
@@ -1674,7 +1324,7 @@ class Agent:
 
             # State transition
             # CLEANING -> RETURNING
-            if are_no_polluted_rooms(air_sensor_pollution_data) and current_time >= pollution_end_time:     # 오염 구역이 없음
+            if are_no_polluted_rooms(air_pollution_sensor_data) and current_time >= pollution_end_time:     # 오염 구역이 없음
                 next_fsm_state = FSM_RETURNING
 
                 self.current_waypoint_index = 0
@@ -1682,15 +1332,15 @@ class Agent:
                 self.tmp_target_position = self.waypoints[0]
 
             # tmp
-            elif current_time >= pollution_end_time and map_id != 0:
-                next_fsm_state = FSM_RETURNING
+            # elif current_time >= pollution_end_time and map_id != 0:
+            #     next_fsm_state = FSM_RETURNING
 
-                self.current_waypoint_index = 0
-                self.waypoints = self.global_planner(start_node_index=self.current_node_index, end_node_index=docking_station_node_index, map_id=map_id)
-                self.tmp_target_position = self.waypoints[0]
+            #     self.current_waypoint_index = 0
+            #     self.waypoints = self.global_planner(start_node_index=self.current_node_index, end_node_index=docking_station_node_index, map_id=map_id)
+            #     self.tmp_target_position = self.waypoints[0]
 
             # CLEANING -> NAVIGATING
-            elif air_sensor_pollution_data[self.optimal_next_node_index] < pollution_threshold and optimal_visit_order:       # 청정 완료함
+            elif air_pollution_sensor_data[self.optimal_next_node_index] < self.pollution_threshold and optimal_visit_order:       # 청정 완료함
                 next_fsm_state = FSM_NAVIGATING
 
                 # 꼭 이때 해야 할까?
@@ -1718,19 +1368,26 @@ class Agent:
                 self.current_waypoint_index += 1
                 self.tmp_target_position = self.waypoints[self.current_waypoint_index]
 
-        # log
-        if current_fsm_state == FSM_NAVIGATING:
-            self.log(f"[{current_time:.1f}] [NAVIGATING] {self.current_node_index} -> {self.optimal_next_node_index} | PF Error: {self.distance_error:.3f}")
-        elif current_fsm_state == FSM_CLEANING:
-            self.log(f"[{current_time:.1f}] [CLEANING] {self.current_node_index}: {air_sensor_pollution_data[self.current_node_index]:.3f} | PF Error: {self.distance_error:.3f}")
-        else:
-            self.log(f"[{current_time:.1f}] [{current_fsm_state}] | PF Error: {self.distance_error:.3f}")
-
-
         return next_fsm_state, action
+    
+    def localizer(self, delta_distance, delta_yaw, scan_ranges, occupancy_grid_map, distance_map, map_origin, map_resolution):
+        self.mcl.update_particles_by_motion_model(delta_distance, delta_yaw)
+        self.mcl.update_weights_by_measurement_model(
+            scan_ranges=scan_ranges,
+            occupancy_grid_map=occupancy_grid_map,
+            distance_map=distance_map,
+            map_origin=map_origin,
+            map_resolution=map_resolution
+        )
+        estimated_x, estimated_y, estimated_yaw = self.mcl.estimate_robot_pose()
+        current_robot_pose = (estimated_x, estimated_y, estimated_yaw)
 
+        self.mcl.resample_particles()
 
-    def move_along_path(self, start_node, end_node, map_id, distance_threshold=0.1):
+        return current_robot_pose
+
+    # test
+    def move_along_path(self, start_node, end_node, current_robot_pose, map_id, distance_threshold=0.1):
         """
         주어진 start_node → end_node 경로를 따라가며 이동하는 함수
 
@@ -1743,13 +1400,13 @@ class Agent:
 
         # 현재 목표 웨이포인트
         self.target_position = waypoints[self.current_waypoint_index]
-        linear_velocity, angular_velocity = self.controller(self.true_robot_pose, self.target_position)
+        linear_velocity, angular_velocity = self.controller(current_robot_pose, self.target_position)
         action = (0, linear_velocity, angular_velocity)
 
         # 현재 위치와 목표 위치 거리 계산
         distance_to_target = math.hypot(
-            self.target_position[0] - self.true_robot_pose[0],
-            self.target_position[1] - self.true_robot_pose[1]
+            self.target_position[0] - current_robot_pose[0],
+            self.target_position[1] - current_robot_pose[1]
         )
         if distance_to_target < distance_threshold:
             if self.current_waypoint_index < len(waypoints) - 1:
@@ -1768,3 +1425,213 @@ class Agent:
                     action = (0, 0, 0)
 
         return action
+
+class Agent:
+    def __init__(self, logger):
+        self.logger = logger
+        self.steps = 0
+
+        # Constant
+        self.resolution = 0.01
+
+    def initialize_map(self, map_info: MapInfo):
+        """
+        매핑 정보를 전달받는 함수
+        시뮬레이션 (episode) 시작 시점에 호출됨
+
+        MapInfo: 매핑 정보를 저장한 클래스
+        ---
+        height: int, 맵의 높이 (격자 크기 단위)
+        width: int, 맵의 너비 (격자 크기 단위)
+        wall_grid: np.ndarray, 각 칸이 벽인지 여부를 저장하는 2차원 배열
+        room_grid: np.ndarray, 각 칸이 몇 번 방에 해당하는지 저장하는 2차원 배열
+        num_rooms: int, 방의 개수
+        grid_size: float, 격자 크기 (m)
+        grid_origin: (float, float), 실제 world의 origin이 wall_grid 격자의 어디에 해당하는지 표시
+        station_pos: (float, float), 청정 완료 후 복귀해야 하는 도크의 world 좌표
+        room_names: list of str, 각 방의 이름
+        pollution_end_time: float, 마지막 오염원 활동이 끝나는 시각
+        starting_pos: (float, float), 시뮬레이션 시작 시 로봇의 world 좌표
+        starting_angle: float, 시뮬레이션 시작 시 로봇의 각도 (x축 기준, 반시계 방향)
+
+        is_wall: (x, y) -> bool, 해당 좌표가 벽인지 여부를 반환하는 함수
+        get_room_id: (x, y) -> int, 해당 좌표가 속한 방의 ID를 반환하는 함수 (방에 속하지 않으면 -1 반환)
+        get_cells_in_room: (room_id) -> list of (x, y), 해당 방에 속한 모든 격자의 좌표를 반환하는 함수
+        grid2pos: (grid) -> (x, y), 격자 좌표를 실제 world 좌표로 변환하는 함수
+        pos2grid: (pos) -> (grid_x, grid_y), 실제 world 좌표를 격자 좌표로 변환하는 함수
+        ---
+        """
+        # Class object
+        self.map = Map()
+        
+        # Identify map
+        if map_info.num_rooms == 2: 
+            self.map_id = 0
+            self.map_room_num = 2
+            self.map_origin = (14, 20)
+            self.pollution_end_time = 20
+            map = self.map.ORIGINAL_STRING_MAP0
+        elif map_info.num_rooms == 5: 
+            self.map_id = 1
+            self.map_room_num = 5
+            self.map_origin = (25, 25)
+            self.pollution_end_time = 80
+            map = self.map.ORIGINAL_STRING_MAP1
+        elif map_info.num_rooms == 8:
+            self.map_id = 2
+            self.map_room_num = 8
+            self.map_origin = (37, 37)
+            self.pollution_end_time = 130
+            map = self.map.ORIGINAL_STRING_MAP2
+        elif map_info.num_rooms == 13:
+            self.map_id = 3
+            self.map_room_num = 13
+            self.map_origin = (40, 50)
+            self.pollution_end_time = 200
+            map = self.map.ORIGINAL_STRING_MAP3
+
+        # Finite state machine
+        self.current_fsm_state = "READY"
+
+        # [Localization] Initialize robot pose by IMU sensor data
+        initial_robot_pose = Pose(
+            _x=map_info.starting_pos[0],
+            _y=map_info.starting_pos[1],
+            _yaw=map_info.starting_angle
+        )
+        self.autonomous_navigator = AutonomousNavigator(initial_robot_pose)
+
+        # [Localization] Occupancy grid map and distance map
+        original_map = self.map.string_to_np_array_map(map)
+        self.occupancy_grid_map = self.map.upscale_occupancy_grid_map(original_map, 0.2 / self.resolution)
+        self.distance_map = self.map.occupancy_grid_to_distance_map(self.occupancy_grid_map, map_resolution=self.resolution)
+    
+        # True robot pose in only train
+        self.true_robot_pose = (None, None, None)
+
+    def act(self, observation: Observation):
+        """
+        env로부터 Observation을 전달받아 action을 반환하는 함수
+        매 step마다 호출됨
+
+        Observation: 로봇이 센서로 감지하는 정보를 저장한 dict
+        ---
+        sensor_lidar_front: np.ndarray, 전방 라이다 (241 x 1)
+        sensor_lidar_back: np.ndarray, 후방 라이다 (241 x 1)
+        sensor_tof_left: np.ndarray, 좌측 multi-tof (8 x 8)
+        sensor_tof_right: np.ndarray, 우측 multi-tof (8 x 8)
+        sensor_camera: np.ndarray, 전방 카메라 (480 x 640 x 3)
+        sensor_ray: float, 상향 1D 라이다
+        sensor_pollution: float, 로봇 내장 오염도 센서
+        air_sensor_pollution: np.ndarray, 거치형 오염도 센서 (방 개수 x 1)
+        disp_position: (float, float), 이번 step의 로봇의 위치 변위 (오차 포함)
+        disp_angle: float, 이번 step의 로봇의 각도 변위 (오차 포함)
+        ---
+
+        action: (MODE, LINEAR, ANGULAR)
+        MODE가 0인 경우: 이동 명령, Twist 컨트롤로 선속도(LINEAR) 및 각속도(ANGULAR) 조절. 최대값 1m/s, 2rad/s
+        MODE가 1인 경우: 청정 명령, 제자리에서 공기를 청정. LINEAR, ANGULAR는 무시됨. 청정 명령을 유지한 후 1초가 지나야 실제로 청정이 시작됨
+        """
+        # [Observation] pollution data
+        air_pollution_sensor_data = observation['air_sensor_pollution']
+        robot_pollution_sensor_data =  observation['sensor_pollution']
+        # [Observation] IMU data
+        delta_distance = np.linalg.norm(observation["disp_position"])
+        delta_yaw = observation['disp_angle']
+        # [Observation] LiDAR data
+        scan_ranges = observation['sensor_lidar_front']
+
+        # Localization
+        current_robot_pose = self.autonomous_navigator.localizer(
+            delta_distance, 
+            delta_yaw, 
+            scan_ranges, 
+            self.occupancy_grid_map, 
+            self.distance_map, 
+            self.map_origin, 
+            self.resolution
+        )
+        # test
+        # current_robot_pose = self.true_robot_pose
+
+        # Current time
+        dt = 0.1
+        current_time = self.steps * dt
+
+        # Finite state machine
+        next_state, action = self.autonomous_navigator.finite_state_machine(
+            air_pollution_sensor_data,
+            robot_pollution_sensor_data,
+            current_time,
+            self.pollution_end_time,
+            current_robot_pose,
+            self.current_fsm_state,
+            self.map_id,
+            self.map_room_num
+        )
+        self.current_fsm_state = next_state 
+
+        # Log
+        if self.true_robot_pose[0] != None or self.true_robot_pose[1] != None:
+            x_error = current_robot_pose[0] - self.true_robot_pose[0]
+            y_error = current_robot_pose[1] - self.true_robot_pose[1]
+            distance_error = math.hypot(x_error, y_error)
+
+            if self.current_fsm_state == "NAVIGATING":
+                self.log(f"[{current_time:.1f}] [NAVIGATING] {self.autonomous_navigator.current_node_index} -> {self.autonomous_navigator.optimal_next_node_index} | PF Error: {distance_error:.3f}")
+            elif self.current_fsm_state == "CLEANING":
+                self.log(f"[{current_time:.1f}] [CLEANING] {self.autonomous_navigator.current_node_index}: {air_pollution_sensor_data[self.autonomous_navigator.current_node_index]:.3f} | PF Error: {distance_error:.3f}")
+            else:
+                self.log(f"[{current_time:.1f}] [{self.current_fsm_state}] | PF Error: {distance_error:.3f}")
+
+        # --------------------------------------------------
+
+        # --------------------------------------------------
+        # ------- 여기만 테스트 하세요 아빠 ----------------
+        # --------------------------------------------------
+        # action = self.autonomous_navigator.move_along_path(1, 3, self.true_robot_pose, self.map_id)
+        # --------------------------------------------------
+
+        self.steps += 1 
+        return action
+
+    def learn(
+            self,
+            observation: Observation,
+            info: Info,
+            action,
+            next_observation: Observation,
+            next_info: Info,
+            terminated,
+            done,
+            ):
+        """
+        실시간으로 훈련 상태를 전달받고 에이전트를 학습시키는 함수
+        training 중에만 매 step마다 호출되며(act 호출 후), test 중에는 호출되지 않음
+        강한 충돌(0.7m/s 이상 속도로 충돌)이 발생하면 시뮬레이션이 종료되고 terminated에 true가 전달됨 (실격)
+        도킹 스테이션에 도착하면 시뮬레이션이 종료되고 done에 true가 전달됨
+
+        Info: 센서 감지 정보 이외에 학습에 활용할 수 있는 정보 - 오직 training시에만 제공됨
+        ---
+        robot_position: (float, float), 로봇의 현재 world 좌표
+        robot_angle: float, 로봇의 현재 각도
+        collided: bool, 현재 로봇이 벽이나 물체에 충돌했는지 여부
+        all_pollution: np.ndarray, 거치형 에어 센서가 없는 방까지 포함한 오염도 정보
+        ---
+        """
+        # Only simulation
+        self.true_robot_pose = (info["robot_position"][0], info["robot_position"][1], info["robot_angle"])
+
+    def reset(self):
+        """
+        모델 상태 등을 초기화하는 함수
+        training시, 각 episode가 끝날 때마다 호출됨 (initialize_map 호출 전)
+        """
+        self.steps = 0
+
+    def log(self, msg):
+        """
+        터미널에 로깅하는 함수. print를 사용하면 비정상적으로 출력됨.
+        ROS Node의 logger를 호출.
+        """
+        self.logger(str(msg))
