@@ -1,13 +1,32 @@
+import math
+import itertools
+
+from mcl import MonteCarloLocalizer
+
 class AutonomousNavigator:
+    def __init__(self,
+        pollution_threshold=0.05
+        ):
+        self.pollution_threshold = pollution_threshold
+
+        # Class object
+        self.mcl = MonteCarloLocalizer()
+
+        # Finite state machine
+        self.waypoints = []
+        self.current_waypoint_index = 0
+        self.tmp_target_position = None
+        self.optimal_next_node_index = None
+        self.current_node_index
+    
     def mission_planner(
             self, 
             air_sensor_pollution_data, 
             robot_sensor_pollution_data, 
             current_node_index,
             map_id,
-            room_num,
-            pollution_threshold=0.05
-            ):
+            room_num
+        ):
         """
         미션 플래너: 오염 감지된 방들을 기반으로 TSP 순서에 따라 task queue 생성
 
@@ -73,7 +92,7 @@ class AutonomousNavigator:
         # Polluted regions
         observed_polluted_regions = [
             room_id for room_id in range(room_num)
-            if air_sensor_pollution_data[room_id] > pollution_threshold
+            if air_sensor_pollution_data[room_id] > self.pollution_threshold
         ]
 
         if not observed_polluted_regions:
@@ -620,23 +639,24 @@ class AutonomousNavigator:
                 max_linear=1, max_angular=1.0,
                 angle_threshold=0.2):
         """
-        목표 방향을 먼저 향하도록 하고, 방향이 맞으면 직진.
+        Turn and go to goal
         """
         x, y, theta = current_robot_pose
         target_x, target_y = target_position
 
+        # Position error
         dx = target_x - x
         dy = target_y - y
         distance = math.hypot(dx, dy)
         target_angle = math.atan2(dy, dx)
 
-        # 방향 오차
+        # Direction error
         angle_error = target_angle - theta
         angle_error = math.atan2(math.sin(angle_error), math.cos(angle_error))  # -pi ~ pi
 
-        # 방향 우선 제어
         if abs(angle_error) > angle_threshold:
-            linear_velocity = 0.0  # 먼저 회전
+            # 방향 우선 제어
+            linear_velocity = 0.0 
             angular_velocity = max(-max_angular, min(max_angular, angular_gain * angle_error))
         else:
             linear_velocity = max(-max_linear, min(max_linear, linear_gain * distance))
@@ -644,10 +664,7 @@ class AutonomousNavigator:
 
         return linear_velocity, angular_velocity
 
-    def localizer(self, delta_distance, delta_yaw, scan_ranges, occupancy_grid_map, distance_map):
-        """
-        Localization by Particle Filter
-        """
+    def localizer(self, delta_distance, delta_yaw, scan_ranges, occupancy_grid_map, distance_map, map_origin, map_resolution):
         # Basic
         # x, y, yaw = self.current_robot_pose
 
@@ -656,34 +673,34 @@ class AutonomousNavigator:
         # new_yaw = (yaw + delta_yaw + math.pi) % (2 * math.pi) - math.pi
         # self.current_robot_pose = (new_x, new_y, new_yaw)
 
-        # Localization by Particle Filter
-        self.particle_filter.update_particles_by_motion_model(delta_distance, delta_yaw)
-        self.particle_filter.update_weights_by_measurement_model(
+        self.mcl.update_particles_by_motion_model(delta_distance, delta_yaw)
+        self.mcl.update_weights_by_measurement_model(
             scan_ranges=scan_ranges,
             occupancy_grid_map=occupancy_grid_map,
             distance_map=distance_map,
-            map_origin=self.map_origin,
-            map_resolution=self.resolution
+            map_origin=map_origin,
+            map_resolution=map_resolution
         )
-        estimated_x, estimated_y, estimated_yaw = self.particle_filter.estimate_robot_pose()
-        self.current_robot_pose = (estimated_x, estimated_y, estimated_yaw)
-        self.particle_filter.resample_particles()
+        estimated_x, estimated_y, estimated_yaw = self.mcl.estimate_robot_pose()
+        estimated_robot_pose = (estimated_x, estimated_y, estimated_yaw)
+        self.mcl.resample_particles()
 
-        # Print error
-        if True:
-            if (
-                self.true_robot_pose is None 
-                or self.current_robot_pose is None
-                or None in self.true_robot_pose
-                or None in self.current_robot_pose
-            ):
-                return
+        # # Print error
+        # if True:
+        #     if (
+        #         self.true_robot_pose is None 
+        #         or self.current_robot_pose is None
+        #         or None in self.true_robot_pose
+        #         or None in self.current_robot_pose
+        #     ):
+        #         return
 
-            dx = self.current_robot_pose[0] - self.true_robot_pose[0]
-            dy = self.current_robot_pose[1] - self.true_robot_pose[1]
-            self.distance_error = math.hypot(dx, dy)
-            if self.distance_error > self.max_localization_error: self.max_localization_error = self.distance_error
-            # self.log(f"PF Error: {distance_error:.3f}, MAX Error: {self.max_localization_error}")
+        #     dx = self.current_robot_pose[0] - self.true_robot_pose[0]
+        #     dy = self.current_robot_pose[1] - self.true_robot_pose[1]
+        #     self.distance_error = math.hypot(dx, dy)
+        #     if self.distance_error > self.max_localization_error: self.max_localization_error = self.distance_error
+
+        return estimated_robot_pose
 
     # Main Logic
     def finite_state_machine(self,
@@ -694,8 +711,7 @@ class AutonomousNavigator:
             current_robot_pose, 
             current_fsm_state,
             map_id,
-            room_num,
-            pollution_threshold=0.05 
+            room_num
             ):
         """
         current_fsm_state -> next_fsm_state, action
@@ -815,7 +831,7 @@ class AutonomousNavigator:
                 self.tmp_target_position = self.waypoints[0]
 
             # CLEANING -> NAVIGATING
-            elif air_sensor_pollution_data[self.optimal_next_node_index] < pollution_threshold and optimal_visit_order:       # 청정 완료함
+            elif air_sensor_pollution_data[self.optimal_next_node_index] < self.pollution_threshold and optimal_visit_order:       # 청정 완료함
                 next_fsm_state = FSM_NAVIGATING
 
                 # 꼭 이때 해야 할까?
@@ -843,13 +859,12 @@ class AutonomousNavigator:
                 self.current_waypoint_index += 1
                 self.tmp_target_position = self.waypoints[self.current_waypoint_index]
 
-        # log
-        if current_fsm_state == FSM_NAVIGATING:
-            self.log(f"[{current_time:.1f}] [NAVIGATING] {self.current_node_index} -> {self.optimal_next_node_index} | PF Error: {self.distance_error:.3f}")
-        elif current_fsm_state == FSM_CLEANING:
-            self.log(f"[{current_time:.1f}] [CLEANING] {self.current_node_index}: {air_sensor_pollution_data[self.current_node_index]:.3f} | PF Error: {self.distance_error:.3f}")
-        else:
-            self.log(f"[{current_time:.1f}] [{current_fsm_state}] | PF Error: {self.distance_error:.3f}")
-
+        # # log
+        # if current_fsm_state == FSM_NAVIGATING:
+        #     self.log(f"[{current_time:.1f}] [NAVIGATING] {self.current_node_index} -> {self.optimal_next_node_index} | PF Error: {self.distance_error:.3f}")
+        # elif current_fsm_state == FSM_CLEANING:
+        #     self.log(f"[{current_time:.1f}] [CLEANING] {self.current_node_index}: {air_sensor_pollution_data[self.current_node_index]:.3f} | PF Error: {self.distance_error:.3f}")
+        # else:
+        #     self.log(f"[{current_time:.1f}] [{current_fsm_state}] | PF Error: {self.distance_error:.3f}")
 
         return next_fsm_state, action
