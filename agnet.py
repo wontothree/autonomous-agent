@@ -115,7 +115,7 @@ class Map:
 111111111111000000000000000000000000000000000000011111111111111111111111111
 111111111111000000000000000000000000000000000000000000000000000000000011111
 111111111111000000000000000000000000000000000000000000000000000000000011111
-111111111111000000000000000000000000000000000000000000000000000000000011111
+11111111111100000000000000000000000000000000000000000000000000000000001F1111
 111111111111000000000000000010000000000000000000000000000000000000000011111
 111000000001000000000000000010000000000000000000000000000000000000000011111
 111000000001000000000000000010000000000000000000000000000000000000000011111
@@ -336,8 +336,12 @@ class MonteCarloLocalizer:
             scan_max_range=8.0,
             scan_step=3,
             sigma_hit=0.2,
-            z_hit=0.95,
+            unknown_class_prior=0.5,
+            known_class_prior=0.5,
+            z_hit=0.9,
+            z_max=0.05,
             z_rand=0.05,
+            unknown_class_lambda=1.0,
             baselink_to_laser=[0.147, 0.0, 0.0],  # [x, y, yaw(rad)]
 
             # Resamping
@@ -358,8 +362,12 @@ class MonteCarloLocalizer:
         self.scan_max_range = scan_max_range
         self.scan_step = scan_step
         self.sigma_hit = sigma_hit
+        self.unknown_class_prior = unknown_class_prior
+        self.known_class_prior = known_class_prior
         self.z_hit = z_hit
+        self.z_max = z_max
         self.z_rand = z_rand
+        self.unknown_class_lambda = unknown_class_lambda
         self.baselink_to_laser = baselink_to_laser
         self.omega_slow = omega_slow
         self.omega_fast = omega_fast
@@ -370,7 +378,8 @@ class MonteCarloLocalizer:
         # Member variables
         self.particles = []   
 
-    def initialize_particles(self, 
+    def initialize_particles(
+            self, 
             initial_pose: Pose
         ):
         """
@@ -438,6 +447,7 @@ class MonteCarloLocalizer:
 			# update each particle	
             particle.pose.update(updated_x, updated_y, updated_yaw)
 
+
     def update_weights_by_measurement_model(
             self,
             scan_ranges: np.ndarray,
@@ -467,20 +477,22 @@ class MonteCarloLocalizer:
         - self.scan_step
         - self.sigma_hit
         - self.z_hit
+        - self.z_max
         - self.z_rand
 
         - self.baselink_to_laser
-        """   
-
+        """
+        # Fixed parameters for likelihood field model
+        gaussian_normalization_constant = 1.0 / math.sqrt(2.0 * math.pi * self.sigma_hit**2)
+        gaussian_exponent_factor = 1.0 / (2 * self.sigma_hit ** 2)
+        probability_rand = 1.0 / self.scan_max_range
+ 
         eps = 1e-12
 
         beam_num = len(scan_ranges)
         sampled_beam_indices = np.arange(0, beam_num, self.scan_step)
         sampled_beam_angles = self.scan_min_angle + sampled_beam_indices * self.scan_angle_increment
         sampled_scan_ranges = scan_ranges[sampled_beam_indices]
-        
-        denominator = 2.0 * (self.sigma_hit ** 2)
-        inv_denominator = 1.0 / denominator
         
         # Map constant
         map_height, map_width = occupancy_grid_map.shape
@@ -509,38 +521,34 @@ class MonteCarloLocalizer:
             sin_yaw = particle_sin_yaws[particle_index]
             
             log_likelihood = 0.0
-            
             for beam_index in range(len(sampled_scan_ranges)):
+                # Distance measured by lidar 
                 range_measurement = sampled_scan_ranges[beam_index]
                 
-                # Check validity of range
+                # Likelihood field model
                 if not (self.scan_min_range < range_measurement < self.scan_max_range) or np.isinf(range_measurement) or np.isnan(range_measurement):
-                    log_likelihood += math.log(self.z_rand + eps)
-                    continue
-                
-                sensor_x = particle_x + self.baselink_to_laser[0] * cos_yaw - self.baselink_to_laser[1] * sin_yaw
-                sensor_y = particle_y + self.baselink_to_laser[0] * sin_yaw + self.baselink_to_laser[1] * cos_yaw
-                sensor_yaw = particle_yaw + self.baselink_to_laser[2]
-                direction_x = np.cos(sensor_yaw) * cos_sampled_beam_angles[beam_index] - np.sin(sensor_yaw) * sin_sampled_beam_angles[beam_index]
-                direction_y = np.sin(sensor_yaw) * cos_sampled_beam_angles[beam_index] + np.cos(sensor_yaw) * sin_sampled_beam_angles[beam_index]
-                lidar_hit_x = sensor_x + range_measurement * direction_x
-                lidar_hit_y = sensor_y + range_measurement * direction_y
-                
-                # Index
-                map_index_x = int(round((lidar_hit_x - map_origin_x) / map_resolution))
-                map_index_y = int(round((lidar_hit_y - map_origin_y) / map_resolution))
-                
-                if 0 <= map_index_x < map_width and 0 <= map_index_y < map_height:
-                    distance_in_cells = distance_map[map_index_y, map_index_x]
-                    distance_in_meters = float(distance_in_cells) * map_resolution
-                    # distance_in_meters = float(distance_in_cells)
-                    
-                    prob_hit = math.exp( -(distance_in_meters ** 2) * inv_denominator)
-                    total_prob = self.z_hit * prob_hit + self.z_rand * (1.0 / self.scan_max_range)
-                    
-                    log_likelihood += math.log(total_prob + eps)
+                    probability_lfm = self.z_max + self.z_rand * probability_rand
                 else:
-                    log_likelihood += math.log(self.z_rand + eps)
+                    sensor_x = particle_x + self.baselink_to_laser[0] * cos_yaw - self.baselink_to_laser[1] * sin_yaw
+                    sensor_y = particle_y + self.baselink_to_laser[0] * sin_yaw + self.baselink_to_laser[1] * cos_yaw
+                    sensor_yaw = particle_yaw + self.baselink_to_laser[2]
+                    direction_x = np.cos(sensor_yaw) * cos_sampled_beam_angles[beam_index] - np.sin(sensor_yaw) * sin_sampled_beam_angles[beam_index]
+                    direction_y = np.sin(sensor_yaw) * cos_sampled_beam_angles[beam_index] + np.cos(sensor_yaw) * sin_sampled_beam_angles[beam_index]
+                    lidar_hit_x = sensor_x + range_measurement * direction_x
+                    lidar_hit_y = sensor_y + range_measurement * direction_y
+                    map_index_x = int(round((lidar_hit_x - map_origin_x) / map_resolution))
+                    map_index_y = int(round((lidar_hit_y - map_origin_y) / map_resolution))
+                    
+                    if 0 <= map_index_x < map_width and 0 <= map_index_y < map_height:
+                        distance = distance_map[map_index_x, map_index_y] # meter
+                        
+                        probability_hit = gaussian_normalization_constant * math.exp( -(distance ** 2) * gaussian_exponent_factor)
+
+                        probability_lfm = self.z_hit * probability_hit + self.z_rand * probability_rand
+                    else:
+                        probability_lfm = self.z_rand * probability_rand
+                
+                log_likelihood += math.log(probability_lfm + eps)
         
             log_weights[particle_index] = log_likelihood
             
@@ -556,7 +564,131 @@ class MonteCarloLocalizer:
         total_weight = sum(particle.weight for particle in self.particles)
         if total_weight > 0:
             for particle in self.particles:
-                particle.weight /= total_weight
+                particle.weight /= total_weight 
+
+    # def update_weights_by_measurement_model(
+    #         self,
+    #         scan_ranges: np.ndarray,
+    #         occupancy_grid_map: np.ndarray,
+    #         distance_map: np.ndarray,
+    #         map_origin=(float, float),
+    #         map_resolution= float,
+    #     ):
+    #     """
+    #     Parameters
+    #     ----------
+    #     - scan
+    #     - occupancy_grid_map
+    #     - distance_map
+
+    #     Update
+    #     ------
+    #     - self.particles
+
+    #     Using
+    #     -----
+    #     - self.particle_num
+    #     - self.scan_min_angle
+    #     - self.scan_angle_increment
+    #     - self.scan_min_range
+    #     - self.scan_max_range
+    #     - self.scan_step
+    #     - self.sigma_hit
+    #     - self.z_hit
+    #     - self.z_max
+    #     - self.z_rand
+
+    #     - self.baselink_to_laser
+    #     """
+    #     # Fixed parameters for likelihood field model
+    #     gaussian_normalization_constant = 1.0 / math.sqrt(2.0 * math.pi * self.sigma_hit**2)
+    #     gaussian_exponent_factor = 1.0 / (2 * self.sigma_hit ** 2)
+    #     probability_rand = 1.0 / self.scan_max_range
+ 
+    #     eps = 1e-12
+
+    #     beam_num = len(scan_ranges)
+    #     sampled_beam_indices = np.arange(0, beam_num, self.scan_step)
+    #     sampled_beam_angles = self.scan_min_angle + sampled_beam_indices * self.scan_angle_increment
+    #     sampled_scan_ranges = scan_ranges[sampled_beam_indices]
+        
+    #     # Map constant
+    #     map_height, map_width = occupancy_grid_map.shape
+    #     map_origin_x, map_origin_y = map_origin
+        
+    #     # Initialize particle weight
+    #     log_weights = np.zeros(self.particle_num, dtype=np.float64)
+        
+    #     # previous
+    #     particle_yaws = np.array([particle.pose.yaw for particle in self.particles])
+    #     particle_cos_yaws = np.cos(particle_yaws)
+    #     particle_sin_yaws = np.sin(particle_yaws)
+        
+    #     particle_xs = np.array([particle.pose.x for particle in self.particles])
+    #     particle_ys = np.array([particle.pose.y for particle in self.particles])
+        
+    #     # Previous calculation cos and sine for beam angle
+    #     cos_sampled_beam_angles = np.cos(sampled_beam_angles)
+    #     sin_sampled_beam_angles = np.sin(sampled_beam_angles)
+        
+    #     for particle_index in range(self.particle_num):
+    #         particle_x = particle_xs[particle_index]
+    #         particle_y = particle_ys[particle_index]
+    #         particle_yaw = particle_yaws[particle_index]
+    #         cos_yaw = particle_cos_yaws[particle_index]
+    #         sin_yaw = particle_sin_yaws[particle_index]
+
+    #         sensor_x = particle_x + self.baselink_to_laser[0] * cos_yaw - self.baselink_to_laser[1] * sin_yaw
+    #         sensor_y = particle_y + self.baselink_to_laser[0] * sin_yaw + self.baselink_to_laser[1] * cos_yaw
+    #         sensor_yaw = particle_yaw + self.baselink_to_laser[2]
+         
+    #         log_likelihood = 0.0
+    #         sampled_beam_num = len(sampled_scan_ranges)
+    #         for beam_index in range(sampled_beam_num):
+    #             # Distance measured by lidar 
+    #             range_measurement = sampled_scan_ranges[beam_index]
+                
+    #             # Likelihood field model as known class probability
+    #             if not (self.scan_min_range < range_measurement < self.scan_max_range) or np.isinf(range_measurement) or np.isnan(range_measurement):
+    #                 class_conditional_probability = self.z_max + self.z_rand * probability_rand
+    #             else:
+    #                 direction_x = np.cos(sensor_yaw) * cos_sampled_beam_angles[beam_index] - np.sin(sensor_yaw) * sin_sampled_beam_angles[beam_index]
+    #                 direction_y = np.sin(sensor_yaw) * cos_sampled_beam_angles[beam_index] + np.cos(sensor_yaw) * sin_sampled_beam_angles[beam_index]
+    #                 lidar_hit_x = sensor_x + range_measurement * direction_x
+    #                 lidar_hit_y = sensor_y + range_measurement * direction_y
+    #                 map_index_x = int(round((lidar_hit_x - map_origin_x) / map_resolution))
+    #                 map_index_y = int(round((lidar_hit_y - map_origin_y) / map_resolution))
+                    
+    #                 if 0 <= map_index_x < map_height and 0 <= map_index_y < map_width:
+    #                     distance = distance_map[map_index_x, map_index_y] # meter
+                        
+    #                     probability_hit = gaussian_normalization_constant * math.exp( -(distance ** 2) * gaussian_exponent_factor) * map_resolution
+
+    #                     known_class_probability = (self.z_hit * probability_hit + self.z_rand * probability_rand) * self.known_class_prior
+    #                 else:
+    #                     known_class_probability = (self.z_rand * probability_rand) * self.known_class_prior
+
+    #                 # Exponential distribution as unknown class probability
+    #                 unknown_class_probability = self.unknown_class_lambda * math.exp(-self.unknown_class_lambda * range_measurement) / (1 - math.exp(-self.unknown_class_lambda * self.scan_max_range)) * map_resolution * self.known_class_prior
+    #                 class_conditional_probability = known_class_probability + unknown_class_probability
+
+    #             log_likelihood += math.log(class_conditional_probability + eps)
+        
+    #         log_weights[particle_index] = log_likelihood
+            
+    #     # Normalize log-sum-exp
+    #     max_log_weight = np.max(log_weights)
+    #     exp_weights = np.exp(log_weights - max_log_weight)
+    #     normalized_weights = exp_weights / (np.sum(exp_weights) + eps)
+        
+    #     # allocate weight to particle
+    #     for index, particle in enumerate(self.particles):
+    #         particle.weight = max(normalized_weights[index], eps)
+        
+    #     total_weight = sum(particle.weight for particle in self.particles)
+    #     if total_weight > 0:
+    #         for particle in self.particles:
+    #             particle.weight /= total_weight
 
     def estimate_robot_pose(self):
         """
@@ -644,14 +776,10 @@ class MonteCarloLocalizer:
             for i in indices
         ]
 
-
-
-
-# refactoring
 class AutonomousNavigator:
     def __init__(self,
-        initial_robot_pose,
-        pollution_threshold=0.05
+            initial_robot_pose,
+            pollution_threshold=0.05
         ):
         self.pollution_threshold = pollution_threshold
 
@@ -665,18 +793,14 @@ class AutonomousNavigator:
         self.current_node_index = None
         self.optimal_next_node_index = None
 
-        # test
-        self.target_position = None
-        self.current_waypoint_index = 0
-        self.tmp_start_node = 5
-        self.tmp_end_node = 1
-        self.max_localization_error = 0
-
         # Monte carlo localization
         self.mcl.initialize_particles(initial_robot_pose)
     
-    def mission_planner(
-            self, 
+        # test
+        self.initial_flag = True
+        self.i = 0
+
+    def mission_planner(self, 
             air_pollution_sensor_data, 
             robot_pollution_sensor_data, 
             current_node_index,
@@ -778,7 +902,11 @@ class AutonomousNavigator:
 
         return optimal_visit_order
     
-    def global_planner(self, start_node_index, end_node_index, map_id):
+    def global_planner(self, 
+            start_node_index, 
+            end_node_index, 
+            map_id
+        ):
         """
         Index rules
         - index of region is a index of matrix
@@ -798,46 +926,46 @@ class AutonomousNavigator:
                 (2, 1): [(0.2, 1.6), (-0.8, 1.6), (-1, -2)],
             },
             1: {
-                (0, 1): [(-0.2, -2.0), (-1.6, -3.4), (-2.77, -3.4), (-2.77, -2.2)],               
-                (0, 2): [(-0.2, -2.0), (-1.57, -0.8), (-1.57, 0.8), (-2.4, 2.4)],
-                (0, 3): [(-0.2, -2.0), (-0.62, -0.8), (-0.61, 0.8), (0.9, 0.9), (1.0, 2.8)],
-                (0, 4): [(-0.2, -2.0), (0.8, -0.8), (3.9, -0.8), (3.9, 2.2)],
+                (0, 1): [(-0.2, -2.0), (-1.6, -3.4), (-2.9, -3.4), (-2.9, -2.2)],               
+                (0, 2): [(-0.2, -2.0), (-1.7, -0.8), (-1.7, 0.8), (-2.4, 2.4)],
+                (0, 3): [(-0.2, -2.0), (-0.62, -0.8), (-0.61, 0.8), (0.9, 0.9), (1.0, 3.0)],
+                (0, 4): [(-0.2, -2.0), (0.8, -0.8), (3.9, -0.8), (3.9, 2.4)],
                 (0, 5): [(-0.2, -2.0), (0, -2)],
                 (0, 6): [(-0.2, -2.0), (0.8, -3.6), (2.8, -4.2)],
 
-                (1, 0): [(-2.77, -2.2), (-2.77, -3.4), (-1.6, -3.4), (-0.2, -2.0)],
-                (1, 2): [(-2.77, -2.2), (-2.77, -3.4), (-1.6, -3.4), (-1.57, -0.8), (-1.57, 0.8), (-2.4, 2.4)],
-                (1, 3): [(-2.77, -2.2), (-2.77, -3.4), (-1.6, -3.4), (-0.62, -0.8), (-0.61, 0.8), (0.9, 0.9), (1.0, 2.8)],
-                (1, 4): [(-2.77, -2.2), (-2.77, -3.4), (-1.6, -3.4), (0.8, -0.8), (3.9, -0.8), (3.9, 2.2)],
-                (1, 5): [(-2.77, -2.2), (-2.77, -3.4), (-1.6, -3.4), (0, -2)],
-                (1, 6): [(-2.77, -2.2), (-2.77, -3.4), (-1.6, -3.4), (0.8, -3.6), (2.8, -4.2)],
+                (1, 0): [(-2.9, -2.2), (-2.9, -3.4), (-1.6, -3.4), (-0.2, -2.0)],
+                (1, 2): [(-2.9, -2.2), (-2.9, -3.4), (-1.6, -3.4), (-1.7, -0.8), (-1.7, 0.8), (-2.4, 2.4)],
+                (1, 3): [(-2.9, -2.2), (-2.9, -3.4), (-1.6, -3.4), (-0.62, -0.8), (-0.61, 0.8), (0.9, 0.9), (1.0, 3.0)],
+                (1, 4): [(-2.9, -2.2), (-2.9, -3.4), (-1.6, -3.4), (0.8, -0.8), (3.9, -0.8), (3.9, 2.4)],
+                (1, 5): [(-2.9, -2.2), (-2.9, -3.4), (-1.6, -3.4), (0, -2)],
+                (1, 6): [(-2.9, -2.2), (-2.9, -3.4), (-1.6, -3.4), (0.8, -3.6), (2.8, -4.2)],
                             
-                (2, 0): [(-2.4, 2.4), (-1.57, 0.8), (-1.57, -0.8), (-0.2, -2.0)],			
-                (2, 1): [(-2.4, 2.4), (-1.57, 0.8), (-1.57, -0.8), (-1.6, -3.4), (-2.77, -3.4), (-2.77, -2.2)],
-                (2, 3): [(-2.4, 2.4), (-1.57, 0.8), (-1.57, -0.8), (-0.62, -0.8), (-0.61, 0.8), (0.9, 0.9), (1.0, 2.8)],
-                (2, 4): [(-2.4, 2.4), (-1.57, 0.8), (-1.57, -0.8), (3.9, -0.8), (3.9, 2.2)],
-                (2, 5): [(-2.4, 2.4), (-1.57, 0.8), (-1.57, -0.8), (0, -2)],
-                (2, 6): [(-2.4, 2.4), (-1.57, 0.8), (-1.57, -0.8), (0.8, -3.6), (2.8, -4.2)],			
+                (2, 0): [(-2.4, 2.4), (-1.7, 0.8), (-1.7, -0.8), (-0.2, -2.0)],			
+                (2, 1): [(-2.4, 2.4), (-1.7, 0.8), (-1.7, -0.8), (-1.6, -3.4), (-2.9, -3.4), (-2.9, -2.2)],
+                (2, 3): [(-2.4, 2.4), (-1.7, 0.8), (-1.7, -0.8), (-0.62, -0.8), (-0.61, 0.8), (0.9, 0.9), (1.0, 3.0)],
+                (2, 4): [(-2.4, 2.4), (-1.7, 0.8), (-1.7, -0.8), (3.9, -0.8), (3.9, 2.4)],
+                (2, 5): [(-2.4, 2.4), (-1.7, 0.8), (-1.7, -0.8), (0, -2)],
+                (2, 6): [(-2.4, 2.4), (-1.7, 0.8), (-1.7, -0.8), (0.8, -3.6), (2.8, -4.2)],			
                     
-                (3, 0): [(1.0, 2.8), (0.9, 0.9), (-0.61, 0.8), (-0.62, -0.8), (-0.2, -2.0)],	
-                (3, 1): [(1.0, 2.8), (0.9, 0.9), (-0.61, 0.8), (-0.62, -0.8), (-1.6, -3.4), (-2.77, -3.4), (-2.77, -2.2)],
-                (3, 2): [(1.0, 2.8), (0.9, 0.9), (-0.61, 0.8), (-0.62, -0.8), (-1.57, -0.8), (-1.57, 0.8), (-2.4, 2.4)],
-                (3, 4): [(1.0, 2.8), (0.9, 0.9), (-0.61, 0.8), (-0.62, -0.8), (3.9, -0.8), (3.9, 2.2)],
-                (3, 5): [(1.0, 2.8), (0.9, 0.9), (-0.61, 0.8), (-0.62, -0.8), (0, -2)],
-                (3, 6): [(1.0, 2.8), (0.9, 0.9), (-0.61, 0.8), (-0.62, -0.8), (0.8, -3.6), (2.8, -4.2)],
+                (3, 0): [(1.0, 3.0), (0.9, 0.9), (-0.61, 0.8), (-0.62, -0.8), (-0.2, -2.0)],	
+                (3, 1): [(1.0, 3.0), (0.9, 0.9), (-0.61, 0.8), (-0.62, -0.8), (-1.6, -3.4), (-2.9, -3.4), (-2.9, -2.2)],
+                (3, 2): [(1.0, 3.0), (0.9, 0.9), (-0.61, 0.8), (-0.62, -0.8), (-1.7, -0.8), (-1.7, 0.8), (-2.4, 2.4)],
+                (3, 4): [(1.0, 3.0), (0.9, 0.9), (-0.61, 0.8), (-0.62, -0.8), (3.9, -0.8), (3.9, 2.4)],
+                (3, 5): [(1.0, 3.0), (0.9, 0.9), (-0.61, 0.8), (-0.62, -0.8), (0, -2)],
+                (3, 6): [(1.0, 3.0), (0.9, 0.9), (-0.61, 0.8), (-0.62, -0.8), (0.8, -3.6), (2.8, -4.2)],
 
-                (4, 0): [(3.9, 2.2), (3.9, -0.8), (0.8, -0.8), (-0.2, -2.0)],
-                (4, 1): [(3.9, 2.2), (3.9, -0.8), (0.8, -0.8), (-1.6, -3.4), (-2.77, -3.4), (-2.77, -2.2)],
-                (4, 2): [(3.9, 2.2), (3.9, -0.8), (-1.57, -0.8), (-1.57, 0.8), (-2.4, 2.4)],
-                (4, 3): [(3.9, 2.2), (3.9, -0.8), (-0.62, -0.8), (-0.61, 0.8), (0.9, 0.9), (1.0, 2.8)],
-                (4, 5): [(3.9, 2.2), (3.9, -0.8), (0.8, -0.8), (0, -2)],
-                (4, 6): [(3.9, 2.2), (3.9, -0.9), (1.0, -0.9), (1.0, -4.0), (2.6, -4.2)],
+                (4, 0): [(3.9, 2.4), (3.9, -0.8), (0.8, -0.8), (-0.2, -2.0)],
+                (4, 1): [(3.9, 2.4), (3.9, -0.8), (0.8, -0.8), (-1.6, -3.4), (-2.9, -3.4), (-2.9, -2.2)],
+                (4, 2): [(3.9, 2.4), (3.9, -0.8), (-1.7, -0.8), (-1.7, 0.8), (-2.4, 2.4)],
+                (4, 3): [(3.9, 2.4), (3.9, -0.8), (-0.62, -0.8), (-0.61, 0.8), (0.9, 0.9), (1.0, 3.0)],
+                (4, 5): [(3.9, 2.4), (3.9, -0.8), (0.8, -0.8), (0, -2)],
+                (4, 6): [(3.9, 2.4), (3.9, -0.9), (1.0, -0.9), (1.0, -4.0), (2.6, -4.2)],
 
                 (5, 0): [(0, -2), (-0.2, -2.0)],
-                (5, 1): [(0, -2), (-1.6, -3.4), (-2.77, -3.4), (-2.77, -2.2)],               
-                (5, 2): [(0, -2), (-1.57, -0.8), (-1.57, 0.8), (-2.4, 2.4)],
-                (5, 3): [(0, -2), (-0.62, -0.8), (-0.61, 0.8), (0.9, 0.9), (1.0, 2.8)],
-                (5, 4): [(0, -2), (0.8, -0.8), (3.9, -0.8), (3.9, 2.2)],
+                (5, 1): [(0, -2), (-1.6, -3.4), (-2.9, -3.4), (-2.9, -2.2)],               
+                (5, 2): [(0, -2), (-1.7, -0.8), (-1.7, 0.8), (-2.4, 2.4)],
+                (5, 3): [(0, -2), (-0.62, -0.8), (-0.61, 0.8), (0.9, 0.9), (1.0, 3.0)],
+                (5, 4): [(0, -2), (0.8, -0.8), (3.9, -0.8), (3.9, 2.4)],
                 (5, 6): [(0, -2), (0.8, -3.6), (2.8, -4.2)],
             },
             2: {
@@ -1186,10 +1314,13 @@ class AutonomousNavigator:
 
         return map_reference_waypoints[(start_node_index, end_node_index)]
 
-    def controller(self, current_robot_pose, target_position, 
-                linear_gain=1.0, angular_gain=2.0, 
-                max_linear=1, max_angular=1.0,
-                angle_threshold=0.2):
+    def controller(self, 
+            current_robot_pose, 
+            target_position, 
+            linear_gain=1.0, angular_gain=2.0, 
+            max_linear=1, max_angular=1.0,
+            angle_threshold=0.2
+        ):
         """
         Turn and go to goal
         """
@@ -1218,14 +1349,14 @@ class AutonomousNavigator:
 
     # Main Logic
     def finite_state_machine(self,
-        air_pollution_sensor_data,
-        robot_pollution_sensor_data,
-        current_time,
-        pollution_end_time,
-        current_robot_pose, 
-        current_fsm_state,
-        map_id,
-        room_num
+            air_pollution_sensor_data,
+            robot_pollution_sensor_data,
+            current_time,
+            pollution_end_time,
+            current_robot_pose, 
+            current_fsm_state,
+            map_id,
+            room_num
         ):
         """
         current_fsm_state -> next_fsm_state, action
@@ -1240,7 +1371,10 @@ class AutonomousNavigator:
         initial_node_index = room_num
         docking_station_node_index = room_num + 1
 
-        def calculate_distance_to_target_position(current_position, target_position):
+        def calculate_distance_to_target_position(
+                current_position, 
+                target_position
+            ):
             """
             Euclidean distance
             """
@@ -1249,7 +1383,11 @@ class AutonomousNavigator:
             distance = math.hypot(dx, dy)
             return distance
 
-        def is_target_reached(current_position, target_position, threshold=0.05):
+        def is_target_reached(
+                current_position, 
+                target_position, 
+                threshold=0.05
+            ):
             """
             Decide if robot reached in target position by threshold
             """
@@ -1282,7 +1420,11 @@ class AutonomousNavigator:
             if optimal_visit_order: # 목표 구역이 있음
                 next_fsm_state = FSM_NAVIGATING
                 self.optimal_next_node_index = optimal_visit_order[0]
-                self.waypoints = self.global_planner(start_node_index=initial_node_index, end_node_index=self.optimal_next_node_index, map_id=map_id)
+                self.waypoints = self.global_planner(
+                    start_node_index=initial_node_index, 
+                    end_node_index=self.optimal_next_node_index, 
+                    map_id=map_id
+                )
                 self.current_waypoint_index = 0
                 self.tmp_target_position = self.waypoints[0]
             
@@ -1334,7 +1476,11 @@ class AutonomousNavigator:
                 next_fsm_state = FSM_RETURNING
 
                 self.current_waypoint_index = 0
-                self.waypoints = self.global_planner(start_node_index=self.current_node_index, end_node_index=docking_station_node_index, map_id=map_id)
+                self.waypoints = self.global_planner(
+                    start_node_index=self.current_node_index, 
+                    end_node_index=docking_station_node_index,
+                    map_id=map_id
+                )
                 self.tmp_target_position = self.waypoints[0]
 
             # tmp
@@ -1351,7 +1497,11 @@ class AutonomousNavigator:
 
                 # 꼭 이때 해야 할까?
                 self.optimal_next_node_index = optimal_visit_order[0]
-                self.waypoints = self.global_planner(start_node_index=self.current_node_index, end_node_index=self.optimal_next_node_index, map_id=map_id)
+                self.waypoints = self.global_planner(
+                    start_node_index=self.current_node_index,
+                    end_node_index=self.optimal_next_node_index, 
+                    map_id=map_id
+                )
                 self.current_waypoint_index = 0
                 self.tmp_target_position = self.waypoints[0]  
 
@@ -1367,7 +1517,10 @@ class AutonomousNavigator:
         elif current_fsm_state == FSM_RETURNING:
             next_fsm_state = FSM_RETURNING
             
-            linear_velocity, angular_velocity = self.controller(current_robot_pose, self.tmp_target_position)
+            linear_velocity, angular_velocity = self.controller(
+                current_robot_pose, 
+                self.tmp_target_position
+            )
             action = (0, linear_velocity, angular_velocity)
 
             if is_target_reached(current_robot_position, self.tmp_target_position) and self.current_waypoint_index < len(self.waypoints) - 1:
@@ -1376,8 +1529,19 @@ class AutonomousNavigator:
 
         return next_fsm_state, action
     
-    def localizer(self, delta_distance, delta_yaw, scan_ranges, occupancy_grid_map, distance_map, map_origin, map_resolution):
-        self.mcl.update_particles_by_motion_model(delta_distance, delta_yaw)
+    def localizer(self, 
+            delta_distance, 
+            delta_yaw, 
+            scan_ranges, 
+            occupancy_grid_map, 
+            distance_map, 
+            map_origin, 
+            map_resolution
+        ):
+        self.mcl.update_particles_by_motion_model(
+            delta_distance, 
+            delta_yaw
+        )
         self.mcl.update_weights_by_measurement_model(
             scan_ranges=scan_ranges,
             occupancy_grid_map=occupancy_grid_map,
@@ -1392,43 +1556,60 @@ class AutonomousNavigator:
 
         return current_robot_pose
 
-    # test
-    def move_along_path(self, start_node, end_node, current_robot_pose, map_id, distance_threshold=0.1):
-        """
-        주어진 start_node → end_node 경로를 따라가며 이동하는 함수
+    def move_along_nodes(self,
+            current_robot_pose,
+            node_visit_queue,
+            map_id,
+            room_num
+        ):
+        def calculate_distance(current_position, target_position):
+            dx = target_position[0] - current_position[0]
+            dy = target_position[1] - current_position[1]
+            return math.hypot(dx, dy)
 
-        just for obtaining global plan
-        """
-        waypoints = self.global_planner(self.tmp_start_node, self.tmp_end_node, map_id=map_id)
-        if not waypoints:
-            print(f"[ERROR] No path from {start_node} to {end_node}")
-            return (0, 0, 0)
+        def is_target_reached(current_position, target_position, threshold=0.05):
+            return calculate_distance(current_position, target_position) < threshold
+        
+        initial_node_index = room_num
+        current_robot_position = current_robot_pose[0], current_robot_pose[1]
 
-        # 현재 목표 웨이포인트
-        self.target_position = waypoints[self.current_waypoint_index]
-        linear_velocity, angular_velocity = self.controller(current_robot_pose, self.target_position)
-        action = (0, linear_velocity, angular_velocity)
+        if (self.initial_flag == True):
+            self.current_node_index = initial_node_index
+            self.optimal_next_node_index = node_visit_queue[0]
+            self.waypoints = self.global_planner(
+                initial_node_index,
+                self.optimal_next_node_index,
+                map_id
+            )
+            self.current_waypoint_index = 0
+            self.tmp_target_position = self.waypoints[0]
 
-        # 현재 위치와 목표 위치 거리 계산
-        distance_to_target = math.hypot(
-            self.target_position[0] - current_robot_pose[0],
-            self.target_position[1] - current_robot_pose[1]
-        )
-        if distance_to_target < distance_threshold:
-            if self.current_waypoint_index < len(waypoints) - 1:
-                self.current_waypoint_index += 1
-                self.target_position = waypoints[self.current_waypoint_index]
-            else:
-                print("Final waypoint reached!")
+            action = (0, 0, 0)
+            self.i += 1
+            self.initial_flag = False
+        else:
+            if is_target_reached(current_robot_position, self.waypoints[-1]):
                 self.current_waypoint_index = 0
+                self.current_node_index = self.optimal_next_node_index
+                self.optimal_next_node_index = node_visit_queue[self.i]
+                self.waypoints = self.global_planner(
+                    self.current_node_index,
+                    self.optimal_next_node_index,
+                    map_id
+                )
+                self.tmp_target_position = self.waypoints[self.current_waypoint_index]
+                self.i += 1
+            
+            if is_target_reached(current_robot_position, self.tmp_target_position) and self.current_waypoint_index < len(self.waypoints) - 1:
+                self.current_waypoint_index += 1
+                self.tmp_target_position = self.waypoints[self.current_waypoint_index]
 
-                self.tmp_start_node = start_node
-                self.tmp_end_node = end_node
-                waypoints = self.global_planner(self.tmp_start_node, self.tmp_start_node, map_id)
-                if waypoints:
-                    self.target_position = waypoints[self.current_waypoint_index]
-                else:
-                    action = (0, 0, 0)
+            linear_velocity, angular_velocity = self.controller(
+                current_robot_pose,
+                self.tmp_target_position
+            )
+
+            action = (0, linear_velocity, angular_velocity)
 
         return action
 
@@ -1480,7 +1661,7 @@ class Agent:
         elif map_info.num_rooms == 5: 
             self.map_id = 1
             self.map_room_num = 5
-            self.map_origin = (25, 25)
+            self.map_origin = (-25 * 0.2, -25 * 0.2)
             self.pollution_end_time = 80
             map = self.map.ORIGINAL_STRING_MAP1
         elif map_info.num_rooms == 8:
@@ -1509,8 +1690,14 @@ class Agent:
 
         # [Localization] Occupancy grid map and distance map
         original_map = self.map.string_to_np_array_map(map)
-        self.occupancy_grid_map = self.map.upscale_occupancy_grid_map(original_map, 0.2 / self.resolution)
-        self.distance_map = self.map.occupancy_grid_to_distance_map(self.occupancy_grid_map, map_resolution=self.resolution)
+        self.occupancy_grid_map = self.map.upscale_occupancy_grid_map(
+            original_map, 
+            0.2 / self.resolution
+        )
+        self.distance_map = self.map.occupancy_grid_to_distance_map(
+            self.occupancy_grid_map, 
+            map_resolution=self.resolution
+        )
     
         # True robot pose in only train
         self.true_robot_pose = (None, None, None)
@@ -1593,9 +1780,16 @@ class Agent:
         # --------------------------------------------------
 
         # --------------------------------------------------
-        # ------- 여기만 테스트 하세요 아빠 ----------------
+        # ------- 여기만 테스트 하세요 ---------------------
         # --------------------------------------------------
-        # action = self.autonomous_navigator.move_along_path(1, 3, self.true_robot_pose, self.map_id)
+        # node_visit_queue = [0, 1, 2, 3, 4, 5, 6]
+        # # node_visit_queue = [6, 5, 4, 3, 2, 1, 0]
+        # action = self.autonomous_navigator.move_along_nodes(
+        #     current_robot_pose, 
+        #     node_visit_queue, 
+        #     self.map_id,
+        #     self.map_room_num
+        # )
         # --------------------------------------------------
 
         self.steps += 1 
