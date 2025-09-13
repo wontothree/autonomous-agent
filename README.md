@@ -43,4 +43,3 @@ Particle
 # To Do
 
 - [ ] ModelPredictivePathIntegralController
-- [ ] LocalCostMapGenerator

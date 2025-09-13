@@ -115,7 +115,7 @@ class Map:
 111111111111000000000000000000000000000000000000011111111111111111111111111
 111111111111000000000000000000000000000000000000000000000000000000000011111
 111111111111000000000000000000000000000000000000000000000000000000000011111
-11111111111100000000000000000000000000000000000000000000000000000000001F1111
+111111111111000000000000000000000000000000000000000000000000000000000011111
 111111111111000000000000000010000000000000000000000000000000000000000011111
 111000000001000000000000000010000000000000000000000000000000000000000011111
 111000000001000000000000000010000000000000000000000000000000000000000011111
@@ -330,10 +330,10 @@ class MonteCarloLocalizer:
             odom_noise=[0.01, 0.002, 0.002, 0.01],
 
             # Weight
-            scan_min_angle=-1.9,
-            scan_angle_increment=0.016,
             scan_min_range=0.05,
             scan_max_range=8.0,
+            scan_min_angle=-1.9,
+            scan_angle_increment=0.016,
             scan_step=3,
             sigma_hit=0.2,
             unknown_class_prior=0.5,
@@ -447,6 +447,123 @@ class MonteCarloLocalizer:
 			# update each particle	
             particle.pose.update(updated_x, updated_y, updated_yaw)
 
+    # def update_weights_by_measurement_model(
+    #         self,
+    #         scan_ranges: np.ndarray,
+    #         occupancy_grid_map: np.ndarray,
+    #         distance_map: np.ndarray,
+    #         map_origin=(float, float),
+    #         map_resolution= float,
+    #     ):
+    #     """
+    #     Parameters
+    #     ----------
+    #     - scan
+    #     - occupancy_grid_map
+    #     - distance_map
+
+    #     Update
+    #     ------
+    #     - self.particles
+
+    #     Using
+    #     -----
+    #     - self.particle_num
+    #     - self.scan_min_angle
+    #     - self.scan_angle_increment
+    #     - self.scan_min_range
+    #     - self.scan_max_range
+    #     - self.scan_step
+    #     - self.sigma_hit
+    #     - self.z_hit
+    #     - self.z_max
+    #     - self.z_rand
+
+    #     - self.baselink_to_laser
+    #     """
+    #     # Fixed parameters for likelihood field model
+    #     gaussian_normalization_constant = 1.0 / math.sqrt(2.0 * math.pi * self.sigma_hit**2)
+    #     gaussian_exponent_factor = 1.0 / (2 * self.sigma_hit ** 2)
+    #     probability_rand = 1.0 / self.scan_max_range
+ 
+    #     eps = 1e-12
+
+    #     beam_num = len(scan_ranges)
+    #     sampled_beam_indices = np.arange(0, beam_num, self.scan_step)
+    #     sampled_beam_angles = self.scan_min_angle + sampled_beam_indices * self.scan_angle_increment
+    #     sampled_scan_ranges = scan_ranges[sampled_beam_indices]
+        
+    #     # Map constant
+    #     map_height, map_width = occupancy_grid_map.shape
+    #     map_origin_x, map_origin_y = map_origin
+        
+    #     # Initialize particle weight
+    #     log_weights = np.zeros(self.particle_num, dtype=np.float64)
+        
+    #     # previous
+    #     particle_yaws = np.array([particle.pose.yaw for particle in self.particles])
+    #     particle_cos_yaws = np.cos(particle_yaws)
+    #     particle_sin_yaws = np.sin(particle_yaws)
+        
+    #     particle_xs = np.array([particle.pose.x for particle in self.particles])
+    #     particle_ys = np.array([particle.pose.y for particle in self.particles])
+        
+    #     # Previous calculation cos and sine for beam angle
+    #     cos_sampled_beam_angles = np.cos(sampled_beam_angles)
+    #     sin_sampled_beam_angles = np.sin(sampled_beam_angles)
+        
+    #     for particle_index in range(self.particle_num):
+    #         particle_x = particle_xs[particle_index]
+    #         particle_y = particle_ys[particle_index]
+    #         particle_yaw = particle_yaws[particle_index]
+    #         cos_yaw = particle_cos_yaws[particle_index]
+    #         sin_yaw = particle_sin_yaws[particle_index]
+            
+    #         log_likelihood = 0.0
+    #         for beam_index in range(len(sampled_scan_ranges)):
+    #             # Distance measured by lidar 
+    #             range_measurement = sampled_scan_ranges[beam_index]
+                
+    #             # Likelihood field model
+    #             if not (self.scan_min_range < range_measurement < self.scan_max_range) or np.isinf(range_measurement) or np.isnan(range_measurement):
+    #                 probability_lfm = self.z_max + self.z_rand * probability_rand
+    #             else:
+    #                 sensor_x = particle_x + self.baselink_to_laser[0] * cos_yaw - self.baselink_to_laser[1] * sin_yaw
+    #                 sensor_y = particle_y + self.baselink_to_laser[0] * sin_yaw + self.baselink_to_laser[1] * cos_yaw
+    #                 sensor_yaw = particle_yaw + self.baselink_to_laser[2]
+    #                 direction_x = np.cos(sensor_yaw) * cos_sampled_beam_angles[beam_index] - np.sin(sensor_yaw) * sin_sampled_beam_angles[beam_index]
+    #                 direction_y = np.sin(sensor_yaw) * cos_sampled_beam_angles[beam_index] + np.cos(sensor_yaw) * sin_sampled_beam_angles[beam_index]
+    #                 lidar_hit_x = sensor_x + range_measurement * direction_x
+    #                 lidar_hit_y = sensor_y + range_measurement * direction_y
+    #                 map_index_x = int(round((lidar_hit_x - map_origin_x) / map_resolution))
+    #                 map_index_y = int(round((lidar_hit_y - map_origin_y) / map_resolution))
+                    
+    #                 if 0 <= map_index_x < map_width and 0 <= map_index_y < map_height:
+    #                     distance = distance_map[map_index_x, map_index_y] # meter
+                        
+    #                     probability_hit = gaussian_normalization_constant * math.exp( -(distance ** 2) * gaussian_exponent_factor)
+
+    #                     probability_lfm = self.z_hit * probability_hit + self.z_rand * probability_rand
+    #                 else:
+    #                     probability_lfm = self.z_rand * probability_rand
+                
+    #             log_likelihood += math.log(probability_lfm + eps)
+        
+    #         log_weights[particle_index] = log_likelihood
+            
+    #     # Normalize log-sum-exp
+    #     max_log_weight = np.max(log_weights)
+    #     exp_weights = np.exp(log_weights - max_log_weight)
+    #     normalized_weights = exp_weights / (np.sum(exp_weights) + eps)
+        
+    #     # allocate weight to particle
+    #     for index, particle in enumerate(self.particles):
+    #         particle.weight = max(normalized_weights[index], eps)
+        
+    #     total_weight = sum(particle.weight for particle in self.particles)
+    #     if total_weight > 0:
+    #         for particle in self.particles:
+    #             particle.weight /= total_weight 
 
     def update_weights_by_measurement_model(
             self,
@@ -519,19 +636,21 @@ class MonteCarloLocalizer:
             particle_yaw = particle_yaws[particle_index]
             cos_yaw = particle_cos_yaws[particle_index]
             sin_yaw = particle_sin_yaws[particle_index]
-            
+
+            sensor_x = particle_x + self.baselink_to_laser[0] * cos_yaw - self.baselink_to_laser[1] * sin_yaw
+            sensor_y = particle_y + self.baselink_to_laser[0] * sin_yaw + self.baselink_to_laser[1] * cos_yaw
+            sensor_yaw = particle_yaw + self.baselink_to_laser[2]
+         
             log_likelihood = 0.0
-            for beam_index in range(len(sampled_scan_ranges)):
+            sampled_beam_num = len(sampled_scan_ranges)
+            for beam_index in range(sampled_beam_num):
                 # Distance measured by lidar 
                 range_measurement = sampled_scan_ranges[beam_index]
                 
-                # Likelihood field model
+                # Likelihood field model as known class probability
                 if not (self.scan_min_range < range_measurement < self.scan_max_range) or np.isinf(range_measurement) or np.isnan(range_measurement):
-                    probability_lfm = self.z_max + self.z_rand * probability_rand
+                    class_conditional_probability = self.z_max + self.z_rand * probability_rand
                 else:
-                    sensor_x = particle_x + self.baselink_to_laser[0] * cos_yaw - self.baselink_to_laser[1] * sin_yaw
-                    sensor_y = particle_y + self.baselink_to_laser[0] * sin_yaw + self.baselink_to_laser[1] * cos_yaw
-                    sensor_yaw = particle_yaw + self.baselink_to_laser[2]
                     direction_x = np.cos(sensor_yaw) * cos_sampled_beam_angles[beam_index] - np.sin(sensor_yaw) * sin_sampled_beam_angles[beam_index]
                     direction_y = np.sin(sensor_yaw) * cos_sampled_beam_angles[beam_index] + np.cos(sensor_yaw) * sin_sampled_beam_angles[beam_index]
                     lidar_hit_x = sensor_x + range_measurement * direction_x
@@ -539,16 +658,20 @@ class MonteCarloLocalizer:
                     map_index_x = int(round((lidar_hit_x - map_origin_x) / map_resolution))
                     map_index_y = int(round((lidar_hit_y - map_origin_y) / map_resolution))
                     
-                    if 0 <= map_index_x < map_width and 0 <= map_index_y < map_height:
+                    if 0 <= map_index_x < map_height and 0 <= map_index_y < map_width:
                         distance = distance_map[map_index_x, map_index_y] # meter
                         
-                        probability_hit = gaussian_normalization_constant * math.exp( -(distance ** 2) * gaussian_exponent_factor)
+                        probability_hit = gaussian_normalization_constant * math.exp( -(distance ** 2) * gaussian_exponent_factor) * map_resolution
 
-                        probability_lfm = self.z_hit * probability_hit + self.z_rand * probability_rand
+                        known_class_probability = (self.z_hit * probability_hit + self.z_rand * probability_rand) * self.known_class_prior
                     else:
-                        probability_lfm = self.z_rand * probability_rand
-                
-                log_likelihood += math.log(probability_lfm + eps)
+                        known_class_probability = (self.z_rand * probability_rand) * self.known_class_prior
+
+                    # Exponential distribution as unknown class probability
+                    unknown_class_probability = self.unknown_class_lambda * math.exp(-self.unknown_class_lambda * range_measurement) / (1 - math.exp(-self.unknown_class_lambda * self.scan_max_range)) * map_resolution * self.known_class_prior
+                    class_conditional_probability = known_class_probability + unknown_class_probability
+
+                log_likelihood += math.log(class_conditional_probability + eps)
         
             log_weights[particle_index] = log_likelihood
             
@@ -564,131 +687,7 @@ class MonteCarloLocalizer:
         total_weight = sum(particle.weight for particle in self.particles)
         if total_weight > 0:
             for particle in self.particles:
-                particle.weight /= total_weight 
-
-    # def update_weights_by_measurement_model(
-    #         self,
-    #         scan_ranges: np.ndarray,
-    #         occupancy_grid_map: np.ndarray,
-    #         distance_map: np.ndarray,
-    #         map_origin=(float, float),
-    #         map_resolution= float,
-    #     ):
-    #     """
-    #     Parameters
-    #     ----------
-    #     - scan
-    #     - occupancy_grid_map
-    #     - distance_map
-
-    #     Update
-    #     ------
-    #     - self.particles
-
-    #     Using
-    #     -----
-    #     - self.particle_num
-    #     - self.scan_min_angle
-    #     - self.scan_angle_increment
-    #     - self.scan_min_range
-    #     - self.scan_max_range
-    #     - self.scan_step
-    #     - self.sigma_hit
-    #     - self.z_hit
-    #     - self.z_max
-    #     - self.z_rand
-
-    #     - self.baselink_to_laser
-    #     """
-    #     # Fixed parameters for likelihood field model
-    #     gaussian_normalization_constant = 1.0 / math.sqrt(2.0 * math.pi * self.sigma_hit**2)
-    #     gaussian_exponent_factor = 1.0 / (2 * self.sigma_hit ** 2)
-    #     probability_rand = 1.0 / self.scan_max_range
- 
-    #     eps = 1e-12
-
-    #     beam_num = len(scan_ranges)
-    #     sampled_beam_indices = np.arange(0, beam_num, self.scan_step)
-    #     sampled_beam_angles = self.scan_min_angle + sampled_beam_indices * self.scan_angle_increment
-    #     sampled_scan_ranges = scan_ranges[sampled_beam_indices]
-        
-    #     # Map constant
-    #     map_height, map_width = occupancy_grid_map.shape
-    #     map_origin_x, map_origin_y = map_origin
-        
-    #     # Initialize particle weight
-    #     log_weights = np.zeros(self.particle_num, dtype=np.float64)
-        
-    #     # previous
-    #     particle_yaws = np.array([particle.pose.yaw for particle in self.particles])
-    #     particle_cos_yaws = np.cos(particle_yaws)
-    #     particle_sin_yaws = np.sin(particle_yaws)
-        
-    #     particle_xs = np.array([particle.pose.x for particle in self.particles])
-    #     particle_ys = np.array([particle.pose.y for particle in self.particles])
-        
-    #     # Previous calculation cos and sine for beam angle
-    #     cos_sampled_beam_angles = np.cos(sampled_beam_angles)
-    #     sin_sampled_beam_angles = np.sin(sampled_beam_angles)
-        
-    #     for particle_index in range(self.particle_num):
-    #         particle_x = particle_xs[particle_index]
-    #         particle_y = particle_ys[particle_index]
-    #         particle_yaw = particle_yaws[particle_index]
-    #         cos_yaw = particle_cos_yaws[particle_index]
-    #         sin_yaw = particle_sin_yaws[particle_index]
-
-    #         sensor_x = particle_x + self.baselink_to_laser[0] * cos_yaw - self.baselink_to_laser[1] * sin_yaw
-    #         sensor_y = particle_y + self.baselink_to_laser[0] * sin_yaw + self.baselink_to_laser[1] * cos_yaw
-    #         sensor_yaw = particle_yaw + self.baselink_to_laser[2]
-         
-    #         log_likelihood = 0.0
-    #         sampled_beam_num = len(sampled_scan_ranges)
-    #         for beam_index in range(sampled_beam_num):
-    #             # Distance measured by lidar 
-    #             range_measurement = sampled_scan_ranges[beam_index]
-                
-    #             # Likelihood field model as known class probability
-    #             if not (self.scan_min_range < range_measurement < self.scan_max_range) or np.isinf(range_measurement) or np.isnan(range_measurement):
-    #                 class_conditional_probability = self.z_max + self.z_rand * probability_rand
-    #             else:
-    #                 direction_x = np.cos(sensor_yaw) * cos_sampled_beam_angles[beam_index] - np.sin(sensor_yaw) * sin_sampled_beam_angles[beam_index]
-    #                 direction_y = np.sin(sensor_yaw) * cos_sampled_beam_angles[beam_index] + np.cos(sensor_yaw) * sin_sampled_beam_angles[beam_index]
-    #                 lidar_hit_x = sensor_x + range_measurement * direction_x
-    #                 lidar_hit_y = sensor_y + range_measurement * direction_y
-    #                 map_index_x = int(round((lidar_hit_x - map_origin_x) / map_resolution))
-    #                 map_index_y = int(round((lidar_hit_y - map_origin_y) / map_resolution))
-                    
-    #                 if 0 <= map_index_x < map_height and 0 <= map_index_y < map_width:
-    #                     distance = distance_map[map_index_x, map_index_y] # meter
-                        
-    #                     probability_hit = gaussian_normalization_constant * math.exp( -(distance ** 2) * gaussian_exponent_factor) * map_resolution
-
-    #                     known_class_probability = (self.z_hit * probability_hit + self.z_rand * probability_rand) * self.known_class_prior
-    #                 else:
-    #                     known_class_probability = (self.z_rand * probability_rand) * self.known_class_prior
-
-    #                 # Exponential distribution as unknown class probability
-    #                 unknown_class_probability = self.unknown_class_lambda * math.exp(-self.unknown_class_lambda * range_measurement) / (1 - math.exp(-self.unknown_class_lambda * self.scan_max_range)) * map_resolution * self.known_class_prior
-    #                 class_conditional_probability = known_class_probability + unknown_class_probability
-
-    #             log_likelihood += math.log(class_conditional_probability + eps)
-        
-    #         log_weights[particle_index] = log_likelihood
-            
-    #     # Normalize log-sum-exp
-    #     max_log_weight = np.max(log_weights)
-    #     exp_weights = np.exp(log_weights - max_log_weight)
-    #     normalized_weights = exp_weights / (np.sum(exp_weights) + eps)
-        
-    #     # allocate weight to particle
-    #     for index, particle in enumerate(self.particles):
-    #         particle.weight = max(normalized_weights[index], eps)
-        
-    #     total_weight = sum(particle.weight for particle in self.particles)
-    #     if total_weight > 0:
-    #         for particle in self.particles:
-    #             particle.weight /= total_weight
+                particle.weight /= total_weight
 
     def estimate_robot_pose(self):
         """
@@ -822,30 +821,30 @@ class AutonomousNavigator:
         """
         distance_matrices = {
             0: [
-                [0.0, 4.0, 0.0, 5.5],
-                [5.6, 0.0, 0.0, 9.1],
-                [2.1, 7.0, 0.0, 0.0],
+                [0.0, 4.0, 0.0, 0.0],
+                [2.2, 0.0, 0.0, 5.4],
+                [0.0, 4.6, 0.0, 0.0],
                 [0.0, 0.0, 0.0, 0.0],
             ],
             1: [
-                [0.0, 4.6, 4.7, 5.0, 8.0, 0.2, 4.1],
-                [4.6, 0.0, 8.1, 9.0, 13.1, 4.7, 7.4],
-                [4.7, 8.1, 0.0, 7.1, 11.6, 4.8, 8.8],
-                [5.0, 9.0, 7.1, 0.0, 11.6, 5.0, 9.0],
-                [8.0, 12.5, 11.6, 11.6, 0.0, 7.8, 7.8],
-                [0.2, 4.7, 4.9, 5.0, 7.8, 0.0, 4.0],
+                [0.0, 4.8, 4.2, 6.5, 8.0, 0.2, 4.0],
+                [4.5, 0.0, 7.4, 10.5, 12.4, 4.6, 7.0],
+                [4.2, 7.8, 0.0, 8.6, 11.2, 4.4, 8.2],
+                [6.5, 10.9, 8.6, 0.0, 13.0, 6.6, 10.4],
+                [8.0, 12.8, 11.2, 13.0, 0.0, 7.8, 10.9],
+                [0.2, 5.0, 4.4, 6.6, 7.8, 0.0, 3.9],
                 [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
             ],
             2: [
-                [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
-                [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
-                [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
-                [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
-                [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
-                [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
-                [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
-                [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
-                [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
+                [0.0, 10.5, 13.2, 13.7, 10.9, 12.8, 9.1, 5.2, 1.4, 6.8],
+                [11.3, 0.0, 11.5, 12.1, 9.4, 15.6, 11.9, 15.7, 10.7, 12.4],
+                [13.2, 11.4, 0.0, 7.2, 8.3, 16.7, 13.0, 17.7, 12.7, 14.4],
+                [13.7, 11.9, 8.0, 0.0, 8.9, 17.3, 13.6, 18.3, 13.3, 14.9],
+                [10.9, 9.4, 8.3, 8.9, 0.0, 14.4, 10.6, 15.5, 10.5, 12.1],
+                [12.7, 15.0, 16.7, 17.2, 14.3, 0.0, 2.4, 17.6, 12.7, 15.1],
+                [9.1, 11.3, 13.0, 13.6, 10.6, 3.7, 0.0, 14.0, 9.0, 11.5],
+                [5.2, 14.7, 17.7, 18.3, 15.5, 17.7, 14.0, 0.0, 5.0, 10.4],
+                [1.4, 9.8, 12.7, 13.3, 10.5, 12.8, 9.0, 5.0, 0.0, 4.7],
                 [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
             ],
             3: [
@@ -926,137 +925,137 @@ class AutonomousNavigator:
                 (2, 1): [(0.2, 1.6), (-0.8, 1.6), (-1, -2)],
             },
             1: {
-                (0, 1): [(-0.2, -2.0), (-1.6, -3.4), (-2.9, -3.4), (-2.9, -2.2)],               
-                (0, 2): [(-0.2, -2.0), (-1.7, -0.8), (-1.7, 0.8), (-2.4, 2.4)],
+                (0, 1): [(-0.2, -2.0), (-1.6, -3.6), (-2.9, -3.6), (-2.9, -2.2)],               
+                (0, 2): [(-0.2, -2.0), (-1.7, -0.8), (-1.7, 0.8), (-2.4, 1.0)],
                 (0, 3): [(-0.2, -2.0), (-0.62, -0.8), (-0.61, 0.8), (0.9, 0.9), (1.0, 3.0)],
-                (0, 4): [(-0.2, -2.0), (0.8, -0.8), (3.9, -0.8), (3.9, 2.4)],
+                (0, 4): [(-0.2, -2.0), (0.8, -0.8), (4.0, -0.8), (4.0, 2.4)],
                 (0, 5): [(-0.2, -2.0), (0, -2)],
                 (0, 6): [(-0.2, -2.0), (0.8, -3.6), (2.8, -4.2)],
 
                 (1, 0): [(-2.9, -2.2), (-2.9, -3.4), (-1.6, -3.4), (-0.2, -2.0)],
-                (1, 2): [(-2.9, -2.2), (-2.9, -3.4), (-1.6, -3.4), (-1.7, -0.8), (-1.7, 0.8), (-2.4, 2.4)],
+                (1, 2): [(-2.9, -2.2), (-2.9, -3.4), (-1.6, -3.4), (-1.7, -0.8), (-1.7, 0.8), (-2.4, 1.0)],
                 (1, 3): [(-2.9, -2.2), (-2.9, -3.4), (-1.6, -3.4), (-0.62, -0.8), (-0.61, 0.8), (0.9, 0.9), (1.0, 3.0)],
-                (1, 4): [(-2.9, -2.2), (-2.9, -3.4), (-1.6, -3.4), (0.8, -0.8), (3.9, -0.8), (3.9, 2.4)],
+                (1, 4): [(-2.9, -2.2), (-2.9, -3.4), (-1.6, -3.4), (0.8, -0.8), (4.0, -0.8), (4.0, 2.4)],
                 (1, 5): [(-2.9, -2.2), (-2.9, -3.4), (-1.6, -3.4), (0, -2)],
                 (1, 6): [(-2.9, -2.2), (-2.9, -3.4), (-1.6, -3.4), (0.8, -3.6), (2.8, -4.2)],
                             
-                (2, 0): [(-2.4, 2.4), (-1.7, 0.8), (-1.7, -0.8), (-0.2, -2.0)],			
-                (2, 1): [(-2.4, 2.4), (-1.7, 0.8), (-1.7, -0.8), (-1.6, -3.4), (-2.9, -3.4), (-2.9, -2.2)],
-                (2, 3): [(-2.4, 2.4), (-1.7, 0.8), (-1.7, -0.8), (-0.62, -0.8), (-0.61, 0.8), (0.9, 0.9), (1.0, 3.0)],
-                (2, 4): [(-2.4, 2.4), (-1.7, 0.8), (-1.7, -0.8), (3.9, -0.8), (3.9, 2.4)],
-                (2, 5): [(-2.4, 2.4), (-1.7, 0.8), (-1.7, -0.8), (0, -2)],
-                (2, 6): [(-2.4, 2.4), (-1.7, 0.8), (-1.7, -0.8), (0.8, -3.6), (2.8, -4.2)],			
+                (2, 0): [(-2.4, 1.0), (-1.7, 0.8), (-1.7, -0.8), (-0.2, -2.0)],			
+                (2, 1): [(-2.4, 1.0), (-1.7, 0.8), (-1.7, -0.8), (-1.6, -3.6), (-2.9, -3.6), (-2.9, -2.2)],
+                (2, 3): [(-2.4, 1.0), (-1.7, 0.8), (-1.7, -0.8), (-0.62, -0.8), (-0.61, 0.8), (0.9, 0.9), (1.0, 3.0)],
+                (2, 4): [(-2.4, 1.0), (-1.7, 0.8), (-1.7, -0.8), (4.0, -0.8), (4.0, 2.4)],
+                (2, 5): [(-2.4, 1.0), (-1.7, 0.8), (-1.7, -0.8), (0, -2)],
+                (2, 6): [(-2.4, 1.0), (-1.7, 0.8), (-1.7, -0.8), (0.8, -3.6), (2.8, -4.2)],			
                     
                 (3, 0): [(1.0, 3.0), (0.9, 0.9), (-0.61, 0.8), (-0.62, -0.8), (-0.2, -2.0)],	
-                (3, 1): [(1.0, 3.0), (0.9, 0.9), (-0.61, 0.8), (-0.62, -0.8), (-1.6, -3.4), (-2.9, -3.4), (-2.9, -2.2)],
-                (3, 2): [(1.0, 3.0), (0.9, 0.9), (-0.61, 0.8), (-0.62, -0.8), (-1.7, -0.8), (-1.7, 0.8), (-2.4, 2.4)],
-                (3, 4): [(1.0, 3.0), (0.9, 0.9), (-0.61, 0.8), (-0.62, -0.8), (3.9, -0.8), (3.9, 2.4)],
+                (3, 1): [(1.0, 3.0), (0.9, 0.9), (-0.61, 0.8), (-0.62, -0.8), (-1.6, -3.6), (-2.9, -3.6), (-2.9, -2.2)],
+                (3, 2): [(1.0, 3.0), (0.9, 0.9), (-0.61, 0.8), (-0.62, -0.8), (-1.7, -0.8), (-1.7, 0.8), (-2.4, 1.0)],
+                (3, 4): [(1.0, 3.0), (0.9, 0.9), (-0.61, 0.8), (-0.62, -0.8), (4.0, -0.8), (4.0, 2.4)],
                 (3, 5): [(1.0, 3.0), (0.9, 0.9), (-0.61, 0.8), (-0.62, -0.8), (0, -2)],
                 (3, 6): [(1.0, 3.0), (0.9, 0.9), (-0.61, 0.8), (-0.62, -0.8), (0.8, -3.6), (2.8, -4.2)],
 
-                (4, 0): [(3.9, 2.4), (3.9, -0.8), (0.8, -0.8), (-0.2, -2.0)],
-                (4, 1): [(3.9, 2.4), (3.9, -0.8), (0.8, -0.8), (-1.6, -3.4), (-2.9, -3.4), (-2.9, -2.2)],
-                (4, 2): [(3.9, 2.4), (3.9, -0.8), (-1.7, -0.8), (-1.7, 0.8), (-2.4, 2.4)],
-                (4, 3): [(3.9, 2.4), (3.9, -0.8), (-0.62, -0.8), (-0.61, 0.8), (0.9, 0.9), (1.0, 3.0)],
-                (4, 5): [(3.9, 2.4), (3.9, -0.8), (0.8, -0.8), (0, -2)],
+                (4, 0): [(4.0, 2.4), (4.0, -0.8), (0.8, -0.8), (-0.2, -2.0)],
+                (4, 1): [(4.0, 2.4), (4.0, -0.8), (0.8, -0.8), (-1.6, -3.6), (-2.9, -3.6), (-2.9, -2.2)],
+                (4, 2): [(4.0, 2.4), (4.0, -0.8), (-1.7, -0.8), (-1.7, 0.8), (-2.4, 1.0)],
+                (4, 3): [(4.0, 2.4), (4.0, -0.8), (-0.62, -0.8), (-0.61, 0.8), (0.9, 0.9), (1.0, 3.0)],
+                (4, 5): [(4.0, 2.4), (4.0, -0.8), (0.8, -0.8), (0, -2)],
                 (4, 6): [(3.9, 2.4), (3.9, -0.9), (1.0, -0.9), (1.0, -4.0), (2.6, -4.2)],
 
                 (5, 0): [(0, -2), (-0.2, -2.0)],
-                (5, 1): [(0, -2), (-1.6, -3.4), (-2.9, -3.4), (-2.9, -2.2)],               
-                (5, 2): [(0, -2), (-1.7, -0.8), (-1.7, 0.8), (-2.4, 2.4)],
+                (5, 1): [(0, -2), (-1.6, -3.6), (-2.9, -3.6), (-2.9, -2.2)],               
+                (5, 2): [(0, -2), (-1.7, -0.8), (-1.7, 0.8), (-2.4, 1.0)],
                 (5, 3): [(0, -2), (-0.62, -0.8), (-0.61, 0.8), (0.9, 0.9), (1.0, 3.0)],
-                (5, 4): [(0, -2), (0.8, -0.8), (3.9, -0.8), (3.9, 2.4)],
+                (5, 4): [(0, -2), (0.8, -0.8), (4.0, -0.8), (4.0, 2.4)],
                 (5, 6): [(0, -2), (0.8, -3.6), (2.8, -4.2)],
             },
             2: {
-                (0, 1): [(3.8, 1.8), (-1.0, 1.6), (-2.4, 2.4), (-2.4, 4.8)],               
-                (0, 2): [(3.8, 1.8), (-4.2, -1.0), (-5.8, -1.0), (-5.8, 1.8)],
-                (0, 3): [(3.8, 1.8), (-4.2, -1.0), (-4.8, -1.6), (-5.2, -5.0)],
-                (0, 4): [(3.8, 1.8), (-2.8, -1.0), (-3.4, -1.6), (-3.4, -2.2), (-1.8, -3.4)],
-                (0, 5): [(3.8, 1.8), (0.2, -1.6), (0.8, -4.4), (0.2, -6.0), (-1.2, -6.0)],
-                (0, 6): [(3.8, 1.8), (0.2, -1.6), (0.8, -5.0)],
-                (0, 7): [(3.8, 1.8), (5.6, 4.6), (6.0, 5.2)],
-                (0, 8): [(3.8, 1.8), (3, 3)],
-                (0, 9): [(3.8, 1.8), (-0.2, 6.4)],
+                (0, 1): [(4.0, 2.0), (-2.4, 1.0), (-2.4, 5.0)],               
+                (0, 2): [(4.0, 2.0), (-3.5, -1.0), (-5.8, -1.0), (-5.8, 1.8)],
+                (0, 3): [(4.0, 2.0), (-3.5, -1.0), (-4.9, -1.0), (-4.9, -3.2), (-5.4, -5.2)],
+                (0, 4): [(4.0, 2.0), (-2.8, -1.0), (-3.4, -1.6), (-3.4, -2.2), (-1.8, -3.4)],
+                (0, 5): [(4.0, 2.0), (0.1, -0.8), (0.1, -2.7), (1, -4.4), (1.4, -6.1), (-1.0, -6.1)],
+                (0, 6): [(4.0, 2.0), (0.1, -0.8), (0.8, -5.0)],
+                (0, 7): [(4.0, 2.0), (5.0, 4.5), (6.4, 4.5), (6.4, 5.6)],
+                (0, 8): [(4.0, 2.0), (3, 3)],
+                (0, 9): [(4.0, 2.0), (1.0, 3.0), (-0.2, 6.4)],
 
-                (1, 0): [(-2.4, 4.8), (-2.4, 2.4), (-1.0, 1.6), (3.8, 1.8)],
-                (1, 2): [(-2.4, 4.8), (-2.4, 2.4), (-4.2, -1.0), (-5.8, -1.0), (-5.8, 1.8)],
-                (1, 3): [(-2.4, 4.8), (-2.4, 2.4), (-4.2, -1.0), (-4.8, -1.6), (-5.2, -5.0)],
-                (1, 4): [(-2.4, 4.8), (-2.4, 2.4), (-3.4, -1.6), (-3.4, -2.2), (-1.8, -3.4)],
-                (1, 5): [(-2.4, 4.8), (-2.4, 2.4), (-0.4, -1.0), (0.2, -1.6), (0.8, -4.4), (0.2, -6.0), (-1.2, -6.0)],
-                (1, 6): [(-2.4, 4.8), (-2.4, 2.4), (-0.4, -1.0), (0.2, -1.6), (0.8, -5.0)],
-                (1, 7): [(-2.4, 4.8), (-2.4, 2.4), (-1.0, 1.6), (5.6, 4.6), (6.0, 5.2)],
-                (1, 8): [(-2.4, 4.8), (-2.4, 2.4), (-1.0, 1.6), (3, 3)],
-                (1, 9): [(-2.4, 4.8), (-2.4, 2.4), (-1.0, 1.6), (-0.2, 1.0), (-0.2, 6.4)],
+                (1, 0): [(-2.4, 5.0), (-2.4, 0.3), (4.0, 2.0)],
+                (1, 2): [(-2.4, 5.0), (-2.4, 0.3), (-3.5, -1.0), (-5.8, -1.0), (-5.8, 1.8)],
+                (1, 3): [(-2.4, 5.0), (-2.4, 0.3), (-3.5, -1.0), (-4.9, -1.0), (-4.9, -3.2), (-5.4, -5.2)],
+                (1, 4): [(-2.4, 5.0), (-2.4, 0.3), (-3.4, -1.6), (-3.4, -2.2), (-1.8, -3.4)],
+                (1, 5): [(-2.4, 5.0), (-2.4, 0.3), (-0.4, -1.0), (0.1, -0.8), (0.1, -2.7), (1, -4.4), (1.4, -6.1), (-1.0, -6.1)],
+                (1, 6): [(-2.4, 5.0), (-2.4, 0.3), (-0.4, -1.0), (0.1, -0.8), (0.8, -5.0)],
+                (1, 7): [(-2.4, 5.0), (-2.4, 0.3), (5.0, 4.5), (6.4, 4.5), (6.4, 5.6)],
+                (1, 8): [(-2.4, 5.0), (-2.4, 0.3), (3, 3)],
+                (1, 9): [(-2.4, 5.0), (-2.4, 0.3), (-0.2, 1.0), (-0.2, 6.4)],
                             
-                (2, 0): [(-5.8, 1.8), (-5.8, -1.0), (-4.2, -1.0), (3.8, 1.8)],			
-                (2, 1): [(-5.8, 1.8), (-5.8, -1.0), (-4.2, -1.0), (-2.4, 2.4), (-2.4, 4.8)],
-                (2, 3): [(-5.8, 1.8), (-5.8, -1.0), (-4.8, -1.6), (-5.2, -5.0)],
-                (2, 4): [(-5.8, 1.8), (-5.8, -1.0), (-4.2, -1.0), (-3.4, -1.6), (-3.4, -2.2), (-1.8, -3.4)],
-                (2, 5): [(-5.8, 1.8), (-5.8, -1.0), (-0.4, -1.0), (0.2, -1.6), (0.8, -4.4), (0.2, -6.0), (-1.2, -6.0)],
-                (2, 6): [(-5.8, 1.8), (-5.8, -1.0), (-0.4, -1.0), (0.2, -1.6), (0.8, -5.0)],
-                (2, 7): [(-5.8, 1.8), (-5.8, -1.0), (-4.2, -1.0), (5.6, 4.6), (6.0, 5.2)],
-                (2, 8): [(-5.8, 1.8), (-5.8, -1.0), (-4.2, -1.0), (3, 3)],
-                (2, 9): [(-5.8, 1.8), (-5.8, -1.0), (-4.2, -1.0), (-0.2, 1.0), (-0.2, 6.4)],		
+                (2, 0): [(-5.8, 1.8), (-5.8, -1.0), (-3.5, -1.0), (4.0, 2.0)],			
+                (2, 1): [(-5.8, 1.8), (-5.8, -1.0), (-3.5, -1.0), (-2.4, 1.0), (-2.4, 5.0)],
+                (2, 3): [(-5.8, 1.8), (-5.8, -1.0), (-4.9, -3.2), (-5.4, -5.2)],
+                (2, 4): [(-5.8, 1.8), (-5.8, -1.0), (-3.5, -1.0), (-3.4, -1.6), (-3.4, -2.2), (-1.8, -3.4)],
+                (2, 5): [(-5.8, 1.8), (-5.8, -1.0), (-0.4, -1.0), (0.1, -0.8), (0.1, -2.7), (1, -4.4), (1.4, -6.1), (-1.0, -6.1)],
+                (2, 6): [(-5.8, 1.8), (-5.8, -1.0), (-0.4, -1.0), (0.1, -0.8), (0.8, -5.0)],
+                (2, 7): [(-5.8, 1.8), (-5.8, -1.0), (-3.5, -1.0), (5.0, 4.5), (6.4, 4.5), (6.4, 5.6)],
+                (2, 8): [(-5.8, 1.8), (-5.8, -1.0), (-3.5, -1.0), (3, 3)],
+                (2, 9): [(-5.8, 1.8), (-5.8, -1.0), (-3.5, -1.0), (-0.2, 1.0), (-0.2, 6.4)],		
                     
-                (3, 0): [(-5.2, -5.0), (-4.8, -1.6), (-4.2, -1.0), (3.8, 1.8)],	
-                (3, 1): [(-5.2, -5.0), (-4.8, -1.6), (-4.2, -1.0), (-2.4, 2.4), (-2.4, 4.8)],
-                (3, 2): [(-5.2, -5.0), (-4.8, -1.6), (-5.8, -1.0), (-5.8, 1.8)],
-                (3, 4): [(-5.2, -5.0), (-4.8, -1.6), (-4.2, -1.0), (-3.4, -1.6), (-3.4, -2.2), (-1.8, -3.4)],
-                (3, 5): [(-5.2, -5.0), (-4.8, -1.6), (-4.2, -1.0), (-0.4, -1.0), (0.2, -1.6), (0.8, -4.4), (0.2, -6.0), (-1.2, -6.0)],
-                (3, 6): [(-5.2, -5.0), (-4.8, -1.6), (-4.2, -1.0), (-0.4, -1.0), (0.2, -1.6), (0.8, -5.0)],
-                (3, 7): [(-5.2, -5.0), (-4.8, -1.6), (-4.2, -1.0), (5.6, 4.6), (6.0, 5.2)],
-                (3, 8): [(-5.2, -5.0), (-4.8, -1.6), (-4.2, -1.0), (3, 3)],
-                (3, 9): [(-5.2, -5.0), (-4.8, -1.6), (-4.2, -1.0), (-0.2, 1.0), (-0.2, 6.4)],
+                (3, 0): [(-5.4, -5.2), (-4.9, -3.2), (-4.9, -1.0), (-3.5, -1.0), (4.0, 2.0)],	
+                (3, 1): [(-5.4, -5.2), (-4.9, -3.2), (-4.9, -1.0), (-3.5, -1.0), (-2.4, 1.0), (-2.4, 5.0)],
+                (3, 2): [(-5.4, -5.2), (-4.9, -3.2), (-4.9, -1.0),  (-5.8, -1.0), (-5.8, 1.8)],
+                (3, 4): [(-5.4, -5.2), (-4.9, -3.2), (-4.9, -1.0), (-3.5, -1.0), (-3.4, -1.6), (-3.4, -2.2), (-1.8, -3.4)],
+                (3, 5): [(-5.4, -5.2), (-4.9, -3.2), (-4.9, -1.0), (-3.5, -1.0), (-0.4, -1.0), (0.1, -0.8), (0.1, -2.7), (1, -4.4), (1.4, -6.1), (-1.0, -6.1)],
+                (3, 6): [(-5.4, -5.2), (-4.9, -3.2), (-4.9, -1.0), (-3.5, -1.0), (-0.4, -1.0), (0.1, -0.8), (0.8, -5.0)],
+                (3, 7): [(-5.4, -5.2), (-4.9, -3.2), (-4.9, -1.0), (-3.5, -1.0), (5.0, 4.5), (6.4, 4.5), (6.4, 5.6)],
+                (3, 8): [(-5.4, -5.2), (-4.9, -3.2), (-4.9, -1.0), (-3.5, -1.0), (3, 3)],
+                (3, 9): [(-5.4, -5.2), (-4.9, -3.2), (-4.9, -1.0), (-3.5, -1.0), (-0.2, 1.0), (-0.2, 6.4)],
 
-                (4, 0): [(-1.8, -3.4), (-3.4, -2.2), (-3.4, -1.6), (-2.8, -1.0), (3.8, 1.8)],
-                (4, 1): [(-1.8, -3.4), (-3.4, -2.2), (-3.4, -1.6), (-2.4, 2.4), (-2.4, 4.8)],
-                (4, 2): [(-1.8, -3.4), (-3.4, -2.2), (-3.4, -1.6), (-4.2, -1.0), (-5.8, -1.0), (-5.8, 1.8)],
-                (4, 3): [(-1.8, -3.4), (-3.4, -2.2), (-3.4, -1.6), (-4.2, -1.0), (-4.8, -1.6), (-5.2, -5.0)],
-                (4, 5): [(-1.8, -3.4), (-3.4, -2.2), (-3.4, -1.6), (-2.8, -1.0), (-0.4, -1.0), (0.2, -1.6), (0.8, -4.4), (0.2, -6.0), (-1.2, -6.0)],
-                (4, 6): [(-1.8, -3.4), (-3.4, -2.2), (-3.4, -1.6), (-2.8, -1.0), (-0.4, -1.0), (0.2, -1.6), (0.8, -5.0)],
-                (4, 7): [(-1.8, -3.4), (-3.4, -2.2), (-3.4, -1.6), (-2.8, -1.0), (5.6, 4.6), (6.0, 5.2)],
+                (4, 0): [(-1.8, -3.4), (-3.4, -2.2), (-3.4, -1.6), (-2.8, -1.0), (4.0, 2.0)],
+                (4, 1): [(-1.8, -3.4), (-3.4, -2.2), (-3.4, -1.6), (-2.4, 1.0), (-2.4, 5.0)],
+                (4, 2): [(-1.8, -3.4), (-3.4, -2.2), (-3.4, -1.6), (-3.5, -1.0), (-5.8, -1.0), (-5.8, 1.8)],
+                (4, 3): [(-1.8, -3.4), (-3.4, -2.2), (-3.4, -1.6), (-3.5, -1.0), (-4.9, -1.0), (-4.9, -3.2), (-5.4, -5.2)],
+                (4, 5): [(-1.8, -3.4), (-3.4, -2.2), (-3.4, -1.6), (-2.8, -1.0), (-0.4, -1.0), (0.1, -0.8), (0.1, -2.7), (1, -4.4), (1.4, -6.1), (-1.0, -6.1)],
+                (4, 6): [(-1.8, -3.4), (-3.4, -2.2), (-3.4, -1.6), (-2.8, -1.0), (-0.4, -1.0), (0.1, -0.8), (0.8, -5.0)],
+                (4, 7): [(-1.8, -3.4), (-3.4, -2.2), (-3.4, -1.6), (-2.8, -1.0), (5.0, 4.5), (6.4, 4.5), (6.4, 5.6)],
                 (4, 8): [(-1.8, -3.4), (-3.4, -2.2), (-3.4, -1.6), (-2.8, -1.0), (3, 3)],
                 (4, 9): [(-1.8, -3.4), (-3.4, -2.2), (-3.4, -1.6), (-2.8, -1.0), (-0.2, 1.0), (-0.2, 6.4)],
 
-                (5, 0): [(-1.2, -6.0), (0.2, -6.0), (0.8, -4.4), (0.2, -1.6), (3.8, 1.8)],
-                (5, 1): [(-1.2, -6.0), (0.2, -6.0), (0.8, -4.4), (0.2, -1.6), (-2.4, 2.4), (-2.4, 4.8)],           
-                (5, 2): [(-1.2, -6.0), (0.2, -6.0), (0.8, -4.4), (0.2, -1.6), (-0.4, -1.0), (-5.8, -1.0), (-5.8, 1.8)],
-                (5, 3): [(-1.2, -6.0), (0.2, -6.0), (0.8, -4.4), (0.2, -1.6), (-0.4, -1.0), (-4.2, -1.0), (-4.8, -1.6), (-5.2, -5.0)],
-                (5, 4): [(-1.2, -6.0), (0.2, -6.0), (0.8, -4.4), (0.2, -1.6), (-0.4, -1.0), (-2.8, -1.0), (-3.4, -1.6), (-3.4, -2.2), (-1.8, -3.4)],
-                (5, 6): [(-1.2, -6.0), (0.2, -6.0), (0.8, -5.0)],
-                (5, 7): [(-1.2, -6.0), (0.2, -6.0), (0.8, -4.4), (0.2, -1.6), (5.6, 4.6), (6.0, 5.2)],
-                (5, 8): [(-1.2, -6.0), (0.2, -6.0), (0.8, -4.4), (0.2, -1.6), (3, 3)],
-                (5, 9): [(-1.2, -6.0), (0.2, -6.0), (0.8, -4.4), (0.2, -1.6), (-0.2, 6.4)],
+                (5, 0): [(-1.0, -6.1), (1.4, -6.1), (1, -4.4), (0.1, -2.1), (0.1, -0.8), (4.0, 2.0)],
+                (5, 1): [(-1.0, -6.1), (1.4, -6.1), (1, -4.4), (0.1, -2.1), (0.1, -0.8), (-2.4, 1.0), (-2.4, 5.0)],           
+                (5, 2): [(-1.0, -6.1), (1.4, -6.1), (1, -4.4), (0.1, -2.1), (0.1, -0.8), (-0.4, -1.0), (-5.8, -1.0), (-5.8, 1.8)],
+                (5, 3): [(-1.0, -6.1), (1.4, -6.1), (1, -4.4), (0.1, -2.1), (0.1, -0.8), (-0.4, -1.0), (-3.5, -1.0), (-4.9, -1.0), (-4.9, -3.2), (-5.4, -5.2)],
+                (5, 4): [(-1.0, -6.1), (1.4, -6.1), (1, -4.4), (0.1, -2.1), (0.1, -0.8), (-0.4, -1.0), (-2.8, -1.0), (-3.4, -1.6), (-3.4, -2.2), (-1.8, -3.4)],
+                (5, 6): [(-1.0, -6.1), (1.4, -6.1)],
+                (5, 7): [(-1.0, -6.1), (1.4, -6.1), (1, -4.4), (0.1, -2.1), (0.1, -0.8), (5.0, 4.5), (6.4, 4.5), (6.4, 5.6)],
+                (5, 8): [(-1.0, -6.1), (1.4, -6.1), (1, -4.4), (0.1, -2.1), (0.1, -0.8), (3, 3)],
+                (5, 9): [(-1.0, -6.1), (1.4, -6.1), (1, -4.4), (0.1, -2.1), (0.1, -0.8), (-0.2, 6.4)],
 
-                (6, 0): [(0.8, -5.0), (0.2, -1.6), (3.8, 1.8)],
-                (6, 1): [(0.8, -5.0), (0.2, -1.6), (-2.4, 2.4), (-2.4, 4.8)],              
-                (6, 2): [(0.8, -5.0), (0.2, -1.6), (-0.4, -1.0), (-5.8, -1.0), (-5.8, 1.8)],
-                (6, 3): [(0.8, -5.0), (0.2, -1.6), (-0.4, -1.0), (-4.2, -1.0), (-4.8, -1.6), (-5.2, -5.0)],
-                (6, 4): [(0.8, -5.0), (0.2, -1.6), (-0.4, -1.0), (-2.8, -1.0), (-3.4, -1.6), (-3.4, -2.2), (-1.8, -3.4)],
-                (6, 5): [(0.8, -5.0), (0.2, -6.0), (-1.2, -6.0)],
-                (6, 7): [(0.8, -5.0), (0.2, -1.6), (5.6, 4.6), (6.0, 5.2)],
-                (6, 8): [(0.8, -5.0), (0.2, -1.6), (3, 3)],
-                (6, 9): [(0.8, -5.0), (0.2, -1.6), (-0.2, 6.4)],
+                (6, 0): [(0.8, -5.0), (0.1, -0.8), (4.0, 2.0)],
+                (6, 1): [(0.8, -5.0), (0.1, -0.8), (-2.4, 1.0), (-2.4, 5.0)],              
+                (6, 2): [(0.8, -5.0), (0.1, -0.8), (-0.4, -1.0), (-5.8, -1.0), (-5.8, 1.8)],
+                (6, 3): [(0.8, -5.0), (0.1, -0.8), (-0.4, -1.0), (-3.5, -1.0), (-4.9, -1.0), (-4.9, -3.2), (-5.4, -5.2)],
+                (6, 4): [(0.8, -5.0), (0.1, -0.8), (-0.4, -1.0), (-2.8, -1.0), (-3.4, -1.6), (-3.4, -2.2), (-1.8, -3.4)],
+                (6, 5): [(0.8, -5.0), (1.4, -6.1), (-1.0, -6.1)],
+                (6, 7): [(0.8, -5.0), (0.1, -0.8), (5.0, 4.5), (6.4, 4.5), (6.4, 5.6)],
+                (6, 8): [(0.8, -5.0), (0.1, -0.8), (3, 3)],
+                (6, 9): [(0.8, -5.0), (0.1, -0.8), (-0.2, 6.4)],
 
-                (7, 0): [(6.0, 5.2), (5.6, 4.6), (3.8, 1.8)],
-                (7, 1): [(6.0, 5.2), (5.6, 4.6), (-1.0, 1.6), (-2.4, 2.4), (-2.4, 4.8)],                
-                (7, 2): [(6.0, 5.2), (5.6, 4.6), (-4.2, -1.0), (-5.8, -1.0), (-5.8, 1.8)],
-                (7, 3): [(6.0, 5.2), (5.6, 4.6), (-4.2, -1.0), (-4.8, -1.6), (-5.2, -5.0)],
-                (7, 4): [(6.0, 5.2), (5.6, 4.6), (-2.8, -1.0), (-3.4, -1.6), (-3.4, -2.2), (-1.8, -3.4)],
-                (7, 5): [(6.0, 5.2), (5.6, 4.6), (0.2, -1.6), (0.8, -4.4), (0.2, -6.0), (-1.2, -6.0)],
-                (7, 6): [(6.0, 5.2), (5.6, 4.6), (0.2, -1.6), (0.8, -5.0)],
-                (7, 8): [(6.0, 5.2), (5.6, 4.6), (3, 3)],
-                (7, 9): [(6.0, 5.2), (5.6, 4.6), (-0.2, 6.4)],
+                (7, 0): [(6.4, 5.6), (6.4, 4.5), (5.0, 4.5), (4.0, 2.0)],
+                (7, 1): [(6.4, 5.6), (6.4, 4.5), (5.0, 4.5), (-2.4, 1.0), (-2.4, 5.0)],                
+                (7, 2): [(6.4, 5.6), (6.4, 4.5), (5.0, 4.5), (-3.5, -1.0), (-5.8, -1.0), (-5.8, 1.8)],
+                (7, 3): [(6.4, 5.6), (6.4, 4.5), (5.0, 4.5), (-3.5, -1.0), (-4.9, -1.0), (-4.9, -3.2), (-5.4, -5.2)],
+                (7, 4): [(6.4, 5.6), (6.4, 4.5), (5.0, 4.5), (-2.8, -1.0), (-3.4, -1.6), (-3.4, -2.2), (-1.8, -3.4)],
+                (7, 5): [(6.4, 5.6), (6.4, 4.5), (5.0, 4.5), (0.1, -0.8), (0.1, -2.7), (1, -4.4), (1.4, -6.1), (-1.0, -6.1)],
+                (7, 6): [(6.4, 5.6), (6.4, 4.5), (5.0, 4.5), (0.1, -0.8), (0.8, -5.0)],
+                (7, 8): [(6.4, 5.6), (6.4, 4.5), (5.0, 4.5), (3, 3)],
+                (7, 9): [(6.4, 5.6), (6.4, 4.5), (5.0, 4.5), (1, 3), (-0.2, 6.4)],
 
-                (8, 0): [(3, 3), (3.8, 1.8)],
-                (8, 1): [(3, 3), (-1.0, 1.6), (-2.4, 2.4), (-2.4, 4.8)],               
-                (8, 2): [(3, 3), (-4.2, -1.0), (-5.8, -1.0), (-5.8, 1.8)],
-                (8, 3): [(3, 3), (-4.2, -1.0), (-4.8, -1.6), (-5.2, -5.0)],
+                (8, 0): [(3, 3), (4.0, 2.0)],
+                (8, 1): [(3, 3), (-2.4, 1.0), (-2.4, 5.0)],               
+                (8, 2): [(3, 3), (-3.5, -1.0), (-5.8, -1.0), (-5.8, 1.8)],
+                (8, 3): [(3, 3), (-3.5, -1.0), (-4.9, -1.0), (-4.9, -3.2), (-5.4, -5.2)],
                 (8, 4): [(3, 3), (-2.8, -1.0), (-3.4, -1.6), (-3.4, -2.2), (-1.8, -3.4)],
-                (8, 5): [(3, 3), (0.2, -1.6), (0.8, -4.4), (0.2, -6.0), (-1.2, -6.0)],
-                (8, 6): [(3, 3), (0.2, -1.6), (0.8, -5.0)],
-                (8, 7): [(3, 3), (5.6, 4.6), (6.0, 5.2)],
+                (8, 5): [(3, 3), (0.1, -0.8), (0.1, -2.7), (1, -4.4), (1.4, -6.1), (-1.0, -6.1)],
+                (8, 6): [(3, 3), (0.1, -0.8), (0.8, -5.0)],
+                (8, 7): [(3, 3), (5.0, 4.5), (6.4, 4.5), (6.4, 5.6)],
                 (8, 9): [(3, 3), (-0.2, 6.4)],
             },
             3: {
@@ -1318,7 +1317,7 @@ class AutonomousNavigator:
             current_robot_pose, 
             target_position, 
             linear_gain=1.0, angular_gain=2.0, 
-            max_linear=1, max_angular=1.0,
+            max_linear=0.8, max_angular=2.0,
             angle_threshold=0.2
         ):
         """
@@ -1401,9 +1400,9 @@ class AutonomousNavigator:
 
         current_robot_position = current_robot_pose[0], current_robot_pose[1]
 
-        # ---------------------------------------------------------------------------- #
-        # [State] READY (start state) ------------------------------------------------ #
-        # ---------------------------------------------------------------------------- #
+        # -------------------------------------------------------------------------------------------------------------------------------------------------------- #
+        # [State] READY (start state) ---------------------------------------------------------------------------------------------------------------------------- #
+        # -------------------------------------------------------------------------------------------------------------------------------------------------------- #
         if current_fsm_state == FSM_READY:
             # Mission planning
             self.current_node_index = initial_node_index
@@ -1434,9 +1433,9 @@ class AutonomousNavigator:
 
             action = (0, 0, 0) # Stop
 
-        # ---------------------------------------------------------------------------- #
-        # [State] Navigating --------------------------------------------------------- #
-        # ---------------------------------------------------------------------------- #
+        # -------------------------------------------------------------------------------------------------------------------------------------------------------- #
+        # [State] Navigating ------------------------------------------------------------------------------------------------------------------------------------- #
+        # -------------------------------------------------------------------------------------------------------------------------------------------------------- #
         elif current_fsm_state == FSM_NAVIGATING:
             # State transition
             # NAVIGATING -> CLEANING
@@ -1457,9 +1456,9 @@ class AutonomousNavigator:
             linear_velocity, angular_velocity = self.controller(current_robot_pose, self.tmp_target_position)
             action = (0, linear_velocity, angular_velocity)
 
-        # ---------------------------------------------------------------------------- #
-        # [State] CLEANING ----------------------------------------------------------- #
-        # ---------------------------------------------------------------------------- #
+        # --------------------------------------------------------------------------------------------------------------------------------------------------------  #
+        # [State] CLEANING ---------------------------------------------------------------------------------------------------------------------------------------  #
+        # --------------------------------------------------------------------------------------------------------------------------------------------------------  #
         elif current_fsm_state == FSM_CLEANING:
             # Mission planning
             optimal_visit_order = self.mission_planner(
@@ -1483,16 +1482,16 @@ class AutonomousNavigator:
                 )
                 self.tmp_target_position = self.waypoints[0]
 
-            # tmp
-            # elif current_time >= pollution_end_time and map_id != 0:
-            #     next_fsm_state = FSM_RETURNING
+            # CLEANING -> RETURNING (early end) (self.optimal_next_node_index vs self.current_node_index)
+            elif air_pollution_sensor_data[self.optimal_next_node_index] < self.pollution_threshold and current_time >= pollution_end_time and map_id == 2:
+                next_fsm_state = FSM_RETURNING
 
-            #     self.current_waypoint_index = 0
-            #     self.waypoints = self.global_planner(start_node_index=self.current_node_index, end_node_index=docking_station_node_index, map_id=map_id)
-            #     self.tmp_target_position = self.waypoints[0]
+                self.current_waypoint_index = 0
+                self.waypoints = self.global_planner(start_node_index=self.current_node_index, end_node_index=docking_station_node_index, map_id=map_id)
+                self.tmp_target_position = self.waypoints[0]
 
             # CLEANING -> NAVIGATING
-            elif air_pollution_sensor_data[self.optimal_next_node_index] < self.pollution_threshold and optimal_visit_order:       # 청정 완료함
+            elif air_pollution_sensor_data[self.current_node_index] < self.pollution_threshold and optimal_visit_order:       # 청정 완료함
                 next_fsm_state = FSM_NAVIGATING
 
                 # 꼭 이때 해야 할까?
@@ -1511,9 +1510,9 @@ class AutonomousNavigator:
             
             action = (1, 0, 0) # Stop and clean
 
-        # ---------------------------------------------------------------------------- #
-        # [State] RETURNING (end state) ---------------------------------------------- #
-        # ---------------------------------------------------------------------------- #
+        # -------------------------------------------------------------------------------------------------------------------------------------------------------- #
+        # [State] RETURNING (end state) -------------------------------------------------------------------------------------------------------------------------- #
+        # -------------------------------------------------------------------------------------------------------------------------------------------------------- #
         elif current_fsm_state == FSM_RETURNING:
             next_fsm_state = FSM_RETURNING
             
@@ -1655,7 +1654,7 @@ class Agent:
         if map_info.num_rooms == 2: 
             self.map_id = 0
             self.map_room_num = 2
-            self.map_origin = (14, 20)
+            self.map_origin = (-14 *0.2, -20 * 0.2)
             self.pollution_end_time = 20
             map = self.map.ORIGINAL_STRING_MAP0
         elif map_info.num_rooms == 5: 
@@ -1667,13 +1666,13 @@ class Agent:
         elif map_info.num_rooms == 8:
             self.map_id = 2
             self.map_room_num = 8
-            self.map_origin = (37, 37)
+            self.map_origin = (-37 * 0.2, -37 * 0.2)
             self.pollution_end_time = 130
             map = self.map.ORIGINAL_STRING_MAP2
         elif map_info.num_rooms == 13:
             self.map_id = 3
             self.map_room_num = 13
-            self.map_origin = (40, 50)
+            self.map_origin = (-40 * 0.2, -50 * 0.2)
             self.pollution_end_time = 200
             map = self.map.ORIGINAL_STRING_MAP3
 
@@ -1701,6 +1700,9 @@ class Agent:
     
         # True robot pose in only train
         self.true_robot_pose = (None, None, None)
+
+        # Log for debugging
+        self.distance_error_sum = 0
 
     def act(self, observation: Observation):
         """
@@ -1769,21 +1771,27 @@ class Agent:
             x_error = current_robot_pose[0] - self.true_robot_pose[0]
             y_error = current_robot_pose[1] - self.true_robot_pose[1]
             distance_error = math.hypot(x_error, y_error)
+            self.distance_error_sum += distance_error
 
             if self.current_fsm_state == "NAVIGATING":
-                self.log(f"[{current_time:.1f}] [NAVIGATING] {self.autonomous_navigator.current_node_index} -> {self.autonomous_navigator.optimal_next_node_index} | PF Error: {distance_error:.3f}")
+                self.log(f"[{current_time:.1f}] [NAVIGATING] {self.autonomous_navigator.current_node_index} -> {self.autonomous_navigator.optimal_next_node_index} | Current Localization Error: {distance_error:.3f}, Average Localization Error: {self.distance_error_sum / self.steps :.3f}")
             elif self.current_fsm_state == "CLEANING":
-                self.log(f"[{current_time:.1f}] [CLEANING] {self.autonomous_navigator.current_node_index}: {air_pollution_sensor_data[self.autonomous_navigator.current_node_index]:.3f} | PF Error: {distance_error:.3f}")
+                self.log(f"[{current_time:.1f}] [CLEANING] {self.autonomous_navigator.current_node_index}: {air_pollution_sensor_data[self.autonomous_navigator.current_node_index]:.3f} | Current Localization Error: {distance_error:.3f}, Average Localization Error: {self.distance_error_sum / self.steps :.3f}")
             else:
-                self.log(f"[{current_time:.1f}] [{self.current_fsm_state}] | PF Error: {distance_error:.3f}")
-
+                self.log(f"[{current_time:.1f}] [{self.current_fsm_state}] | Current Localization Error: {distance_error:.3f}, Average Localization Error: {self.distance_error_sum / self.steps :.3f}")
+        else:
+            if self.current_fsm_state == "NAVIGATING":
+                self.log(f"[{current_time:.1f}] [NAVIGATING] {self.autonomous_navigator.current_node_index} -> {self.autonomous_navigator.optimal_next_node_index}")
+            elif self.current_fsm_state == "CLEANING":
+                self.log(f"[{current_time:.1f}] [CLEANING] {self.autonomous_navigator.current_node_index}: {air_pollution_sensor_data[self.autonomous_navigator.current_node_index]:.3f}")
+            else:
+                self.log(f"[{current_time:.1f}] [{self.current_fsm_state}]")
         # --------------------------------------------------
 
         # --------------------------------------------------
         # ------- 여기만 테스트 하세요 ---------------------
         # --------------------------------------------------
-        # node_visit_queue = [0, 1, 2, 3, 4, 5, 6]
-        # # node_visit_queue = [6, 5, 4, 3, 2, 1, 0]
+        # node_visit_queue = [5, 0, 5, 7]
         # action = self.autonomous_navigator.move_along_nodes(
         #     current_robot_pose, 
         #     node_visit_queue, 
@@ -1835,3 +1843,239 @@ class Agent:
         ROS Node의 logger를 호출.
         """
         self.logger(str(msg))
+
+
+class LocalCostMapGenerator:
+    def __init__(self,
+            map_x_length=16,                     # (m)
+            map_y_length=16,                     # (m)
+            map_center_x_offset=0,               # (m)
+            map_center_y_offset=0,               # (m)
+            map_resolution=0.02,                 # (m)
+            max_cost=100,
+
+            baselink_to_front=0.25,              # (m)
+            baselink_to_rear=0.25,               # (m)
+            baselink_to_right=0.25,              # (m)
+            baselink_to_left=0.25,               # (m)
+            baselink_to_laser=[0.147, 0.0, 0.0], # [x (m), y (m), yaw (rad)]
+
+            scan_point_num=241,
+            scan_min_range=0.05,                 # (m)
+            scan_max_range=0.8,                  # (m)
+            scan_min_angle=-1.9,                 # (rad)
+            scan_angle_increment=0.016,          # (rad)
+        ):
+        # Constants
+        self.map_x_length = map_x_length
+        self.map_y_length = map_y_length
+        self.map_center_x_offset = map_center_x_offset
+        self.map_center_y_offset = map_center_y_offset
+        self.map_resolution = map_resolution
+        self.max_cost = max_cost
+        self.baselink_to_front = baselink_to_front
+        self.baselink_to_rear = baselink_to_rear
+        self.baselink_to_right = baselink_to_right
+        self.baselink_to_left = baselink_to_left
+        self.baselink_to_laser = baselink_to_laser
+        self.scan_point_num = scan_point_num
+        self.scan_min_range = scan_min_range
+        self.scan_max_range = scan_max_range
+        self.scan_min_angle = scan_min_angle
+        self.scan_angle_increment = scan_angle_increment
+
+    def convert_scan_to_pointcloud(self,
+            scan_distances: np.ndarray
+        ) -> np.ndarray:
+        """
+        angle, measurement -> x, y
+
+        Parameter
+        ---------
+        - scan_distance
+
+        Using
+        -----
+        - self.scan_point_num
+        - self.scan_min_angle
+        - self.scan_angle_increment
+        """
+        scan_angles = self.scan_min_angle + np.arange(self.scan_point_num) * self.scan_angle_increment
+
+        pointcloud_xs = scan_distances * np.cos(scan_angles)
+        pointcloud_ys = scan_distances * np.sin(scan_angles)
+
+        pointclouds = np.vstack((pointcloud_xs, pointcloud_ys)).T
+        
+        return pointclouds
+
+    def preprocess_pointcloud(self,
+            pointclouds: np.ndarray
+        ) -> np.ndarray: 
+        """
+        Parameters
+        ----------
+        - pointcloud
+
+        Using
+        -----
+        - self.scan_min_range
+        - self.scan_max_range
+        """
+        # remove too near or too far points
+        distances = np.linalg.norm(pointclouds[:, :2], axis=1)
+
+        is_in_range = (distances >= self.scan_min_range) & (distances <= self.scan_max_range)
+        return pointclouds[is_in_range]
+
+    def transform_laser_to_robot_frame(self,
+            pointclouds: np.ndarray
+        ) -> np.ndarray: 
+        """
+        Parameter
+        ---------
+        - pointclouds
+
+        Return
+        ------
+        np.ndarray of shape (N, 2)
+            Points transformed to the robot frame.
+
+        Using
+        -----
+        - self.baselink_to_laser
+        """
+        # Laser pose relative to robot frame
+        laser_x, laser_y, laser_theta = self.baselink_to_laser
+
+        # Rotation matrix
+        cos_theta, sin_theta = np.cos(laser_theta), np.sin(laser_theta)
+        rotation_matrix = np.array([[cos_theta, -sin_theta],
+                                    [sin_theta,  cos_theta]])
+
+        # Apply rotation and translation
+        transformed_pointclouds = pointclouds @ rotation_matrix.T + np.array([laser_x, laser_y])
+
+        return transformed_pointclouds
+
+    def remove_points_within_robot(self,
+            pointclouds: np.ndarray
+        ) -> np.ndarray: 
+        """
+        robot frame coordinate
+        X axis: forward
+        Y axis: left
+
+        Parameter
+        ---------
+        - pointcloud
+
+        Using
+        -----
+        - self.baselink_to_rear
+        - self.baselink_to_front
+        - self.baselink_to_right
+        - self.baselink_to_left
+        """
+        min_x = - self.baselink_to_rear
+        max_x = self.baselink_to_front
+        min_y = - self.baselink_to_right
+        max_y = self.baselink_to_left
+
+        is_inside_box = (
+            (pointclouds[:, 0] >= min_x) & (pointclouds[:, 0] <= max_x) &
+            (pointclouds[:, 1] >= min_y) & (pointclouds[:, 1] <= max_y)
+        )
+
+        return pointclouds[~is_inside_box]
+
+    def convert_pointcloud_to_costmap(self,
+            pointclouds: np.ndarray    
+        ):
+        """
+        Parameter
+        ---------
+        - pointcloud
+
+        Returns
+        -------
+        - costmap
+        - occupied_indices
+
+        Using
+        -----
+        - self.map_x_length
+        - self.map_y_length
+        - self.map_center_x_offset 
+        - self.map_center_y_offset
+        - self.map_resolution 
+        - self.max_cost 
+        """
+        # Map dimensions in pixels
+        height = int(self.map_x_length / self.map_resolution)
+        width  = int(self.map_y_length / self.map_resolution)
+
+        # Initialize empty costmap
+        costmap = np.zeros((height, width), dtype=np.float32)
+
+        # Convert pointcloud coordinates to map indices
+        col_indices = ((pointclouds[:, 0] + self.map_center_x_offset) / self.map_resolution).astype(int)
+        row_indices = ((pointclouds[:, 1] + self.map_center_y_offset) / self.map_resolution).astype(int)
+
+        # Keep only points inside the map
+        valid_mask = (row_indices >= 0) & (row_indices < height) & \
+                    (col_indices >= 0) & (col_indices < width)
+        row_indices = row_indices[valid_mask]
+        col_indices = col_indices[valid_mask]
+
+        # Fill costmap
+        costmap[row_indices, col_indices] = self.max_cost
+
+        # Save occupied indices
+        occupied_indices = list(set(zip(row_indices, col_indices)))
+
+        return costmap, occupied_indices
+
+    def inflate_rigid_body(self,
+            costmap: np.ndarray,
+            occupied_indices: list    
+        ):
+        """
+        Parameters
+        ----------
+        - costmap
+        - occupied_indices
+
+        Return
+        - costmap
+
+        Using
+        -----
+        - self.map_resolution
+        - self.max_cost
+        - self.baselink_to_front
+        - self.baselink_to_rear
+        - self.baselink_to_right
+        - self.baselink_to_left
+        """
+        # Offsets (robot half-dimensions in grid cells)
+        front_offset = int(np.ceil(self.baselink_to_front / self.map_resolution))
+        rear_offset  = int(np.ceil(self.baselink_to_rear  / self.map_resolution))
+        right_offset = int(np.ceil(self.baselink_to_right / self.map_resolution))
+        left_offset  = int(np.ceil(self.baselink_to_left  / self.map_resolution))
+
+        map_height, map_width = costmap.shape
+
+        for row, col in occupied_indices:
+            # Compute inflation bounds (clamped to map size)
+            row_start = max(row - right_offset, 0)
+            row_end   = min(row + left_offset + 1, map_height)
+
+            col_start = max(col - rear_offset, 0)
+            col_end   = min(col + front_offset + 1, map_width)
+
+            # Inflate costmap region
+            costmap[row_start:row_end, col_start:col_end] = self.max_cost
+
+        return costmap
+        
